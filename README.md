@@ -125,7 +125,6 @@ Necesitas tener instalado:
    - Cloudinary
    - Nextcloud
    - Backup WebDAV
-   - Integrantes del equipo
 4. Verifica que la configuración sea válida con:
 
 ```bash
