@@ -99,7 +99,7 @@ export async function createProduct(form: AdminProductForm) {
   return producto
 }
 
-export async function updateProduct(productId: number, form: AdminProductForm, stockId?: number) {
+export async function updateProduct(productId: number, form: AdminProductForm) {
   const catalogoId = Number(form.catalogoId)
   const categoriaId = Number(form.categoriaId)
   const stock = Number(form.stock)
@@ -124,25 +124,11 @@ export async function updateProduct(productId: number, form: AdminProductForm, s
       categoriaId,
       tipoProducto: form.tipoProducto,
       destacado: false,
+      stock,
     }),
   })
 
-  const producto = await parseResponse<Producto>(response)
-  const persistedStockId = stockId ?? producto.stockId
-  if (persistedStockId) {
-    await parseResponse(await fetch(`${apiUrl}/stocks/${persistedStockId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-      body: JSON.stringify({ productoId: productId, cantidadDisponible: stock, permiteBajoPedido: false }),
-    }))
-  } else {
-    await parseResponse(await fetch(`${apiUrl}/stocks`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-      body: JSON.stringify({ productoId: productId, cantidadDisponible: stock, permiteBajoPedido: false }),
-    }))
-  }
-  return producto
+  return parseResponse<Producto>(response)
 }
 
 export async function deleteProduct(productId: number) {

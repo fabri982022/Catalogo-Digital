@@ -74,7 +74,7 @@ export function AdminPage({ productos, categorias, catalogos, onCreated }: Reado
     try {
       const wasEditing = Boolean(editingProduct)
       const product = editingProduct
-        ? await updateProductRequest(editingProduct.id, productForm, editingProduct.stockId)
+        ? await updateProductRequest(editingProduct.id, productForm)
         : await createProduct(productForm)
       for (const [index, image] of images.entries()) {
         await uploadProductImage(product.id, image, index)

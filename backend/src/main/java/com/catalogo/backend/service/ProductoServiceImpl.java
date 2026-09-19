@@ -4,10 +4,12 @@ import com.catalogo.backend.dto.ProductoDto;
 import com.catalogo.backend.entity.Catalogo;
 import com.catalogo.backend.entity.Categoria;
 import com.catalogo.backend.entity.Producto;
+import com.catalogo.backend.entity.Stock;
 import com.catalogo.backend.mapper.ProductoMapper;
 import com.catalogo.backend.repository.CatalogoRepository;
 import com.catalogo.backend.repository.CategoriaRepository;
 import com.catalogo.backend.repository.ProductoRepository;
+import com.catalogo.backend.repository.StockRepository;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -23,15 +25,18 @@ public class ProductoServiceImpl implements ProductoService {
     private final ProductoRepository productoRepository;
     private final CatalogoRepository catalogoRepository;
     private final CategoriaRepository categoriaRepository;
+    private final StockRepository stockRepository;
     private final ProductoMapper productoMapper;
 
     public ProductoServiceImpl(ProductoRepository productoRepository,
             CatalogoRepository catalogoRepository,
             CategoriaRepository categoriaRepository,
+            StockRepository stockRepository,
             ProductoMapper productoMapper) {
         this.productoRepository = productoRepository;
         this.catalogoRepository = catalogoRepository;
         this.categoriaRepository = categoriaRepository;
+        this.stockRepository = stockRepository;
         this.productoMapper = productoMapper;
     }
 
@@ -103,6 +108,17 @@ public class ProductoServiceImpl implements ProductoService {
             Categoria categoria = categoriaRepository.findById(dto.getCategoriaId())
                     .orElseThrow(() -> new EntityNotFoundException("Categoria no encontrada: " + dto.getCategoriaId()));
             entity.setCategoria(categoria);
+        }
+
+        if (dto.getStock() != null) {
+            Stock stock = entity.getStock();
+            if (stock == null) {
+                stock = new Stock();
+                stock.setProducto(entity);
+                entity.setStock(stock);
+            }
+            stock.setCantidadDisponible(dto.getStock());
+            stockRepository.save(stock);
         }
 
         return productoMapper.toDto(productoRepository.save(entity));
