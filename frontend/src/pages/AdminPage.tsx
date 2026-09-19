@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { createCatalog, createProduct, deleteProduct, updateProduct as updateProductRequest, uploadProductImage } from '../api'
+import { createCatalog, createProduct, deleteProduct, fetchProduct, updateProduct as updateProductRequest, uploadProductImage } from '../api'
 import type { AdminProductForm, Catalogo, Categoria, Producto } from '../types'
 import '../admin.css'
 
@@ -79,12 +79,7 @@ export function AdminPage({ productos, categorias, catalogos, onCreated }: Reado
       for (const [index, image] of images.entries()) {
         await uploadProductImage(product.id, image, index)
       }
-      const persistedProduct: Producto = {
-        ...product,
-        stock: Number(productForm.stock),
-        stockId: product.stockId ?? editingProduct?.stockId,
-        imagenUrl: product.imagenUrl ?? editingProduct?.imagenUrl,
-      }
+      const persistedProduct = await fetchProduct(product.id)
       setStatus('')
       setCompletedProduct({ action: wasEditing ? 'updated' : 'created', product: persistedProduct })
       setProductForm({ ...emptyProduct, catalogoId: productForm.catalogoId, categoriaId: productForm.categoriaId })

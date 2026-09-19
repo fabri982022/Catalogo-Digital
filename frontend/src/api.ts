@@ -30,6 +30,11 @@ export async function fetchCatalogData() {
   }
 }
 
+export async function fetchProduct(productId: number) {
+  const response = await fetch(`${apiUrl}/productos/${productId}`)
+  return parseResponse<Producto>(response)
+}
+
 export async function authenticate(username: string, password: string): Promise<Usuario> {
   const credentials = `${username}:${password}`
   const authorization = `Basic ${btoa(credentials)}`
@@ -123,9 +128,16 @@ export async function updateProduct(productId: number, form: AdminProductForm, s
   })
 
   const producto = await parseResponse<Producto>(response)
-  if (stockId) {
-    await parseResponse(await fetch(`${apiUrl}/stocks/${stockId}`, {
+  const persistedStockId = stockId ?? producto.stockId
+  if (persistedStockId) {
+    await parseResponse(await fetch(`${apiUrl}/stocks/${persistedStockId}`, {
       method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+      body: JSON.stringify({ productId, cantidadDisponible: stock, permiteBajoPedido: false }),
+    }))
+  } else {
+    await parseResponse(await fetch(`${apiUrl}/stocks`, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json', ...adminHeaders() },
       body: JSON.stringify({ productId, cantidadDisponible: stock, permiteBajoPedido: false }),
     }))
