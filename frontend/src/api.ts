@@ -133,13 +133,13 @@ export async function updateProduct(productId: number, form: AdminProductForm, s
     await parseResponse(await fetch(`${apiUrl}/stocks/${persistedStockId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-      body: JSON.stringify({ productId, cantidadDisponible: stock, permiteBajoPedido: false }),
+      body: JSON.stringify({ productoId: productId, cantidadDisponible: stock, permiteBajoPedido: false }),
     }))
   } else {
     await parseResponse(await fetch(`${apiUrl}/stocks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-      body: JSON.stringify({ productId, cantidadDisponible: stock, permiteBajoPedido: false }),
+      body: JSON.stringify({ productoId: productId, cantidadDisponible: stock, permiteBajoPedido: false }),
     }))
   }
   return producto
