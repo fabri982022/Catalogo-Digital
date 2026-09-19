@@ -133,6 +133,17 @@ export async function updateProduct(productId: number, form: AdminProductForm, s
   return producto
 }
 
+export async function deleteProduct(productId: number) {
+  const response = await fetch(`${apiUrl}/productos/${productId}`, {
+    method: 'DELETE',
+    headers: adminHeaders(),
+  })
+
+  if (!response.ok) {
+    throw new Error(`La solicitud fallo (${response.status}).`)
+  }
+}
+
 export async function uploadProductImage(productId: number, image: File, order: number) {
   const body = new FormData()
   body.append('file', image)

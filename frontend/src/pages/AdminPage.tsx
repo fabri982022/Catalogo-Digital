@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { createCatalog, createProduct, updateProduct as updateProductRequest, uploadProductImage } from '../api'
+import { createCatalog, createProduct, deleteProduct, updateProduct as updateProductRequest, uploadProductImage } from '../api'
 import type { AdminProductForm, Catalogo, Categoria, Producto } from '../types'
 import '../admin.css'
 
@@ -37,6 +37,9 @@ export function AdminPage({ productos, categorias, catalogos, onCreated }: Reado
   const [status, setStatus] = useState('')
   const [saving, setSaving] = useState(false)
   const [editingProduct, setEditingProduct] = useState<Producto | null>(null)
+  const [pendingAction, setPendingAction] = useState<'edit' | 'delete' | null>(null)
+  const [pendingProduct, setPendingProduct] = useState<Producto | null>(null)
+  const [completedProduct, setCompletedProduct] = useState<{ action: 'created' | 'updated'; product: Producto } | null>(null)
 
   useEffect(() => {
     setProductForm((current) => ({
@@ -69,13 +72,21 @@ export function AdminPage({ productos, categorias, catalogos, onCreated }: Reado
     setStatus('')
 
     try {
+      const wasEditing = Boolean(editingProduct)
       const product = editingProduct
         ? await updateProductRequest(editingProduct.id, productForm, editingProduct.stockId)
         : await createProduct(productForm)
       for (const [index, image] of images.entries()) {
         await uploadProductImage(product.id, image, index)
       }
-      setStatus(editingProduct ? 'Producto modificado correctamente.' : `Producto guardado con ${images.length} imagenes.`)
+      const persistedProduct: Producto = {
+        ...product,
+        stock: Number(productForm.stock),
+        stockId: product.stockId ?? editingProduct?.stockId,
+        imagenUrl: product.imagenUrl ?? editingProduct?.imagenUrl,
+      }
+      setStatus('')
+      setCompletedProduct({ action: wasEditing ? 'updated' : 'created', product: persistedProduct })
       setProductForm({ ...emptyProduct, catalogoId: productForm.catalogoId, categoriaId: productForm.categoriaId })
       setImages([])
       setImageInputKey((current) => current + 1)
@@ -134,6 +145,35 @@ export function AdminPage({ productos, categorias, catalogos, onCreated }: Reado
     setImageInputKey((current) => current + 1)
     setStatus('')
     window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function requestProductAction(action: 'edit' | 'delete', producto: Producto) {
+    setPendingAction(action)
+    setPendingProduct(producto)
+  }
+
+  async function confirmProductAction() {
+    if (!pendingProduct || !pendingAction) return
+    const product = pendingProduct
+    const action = pendingAction
+    setPendingAction(null)
+    setPendingProduct(null)
+    if (action === 'edit') {
+      startEditing(product)
+      return
+    }
+
+    setSaving(true)
+    try {
+      await deleteProduct(product.id)
+      if (editingProduct?.id === product.id) cancelEditing()
+      setStatus('Producto eliminado correctamente.')
+      await onCreated()
+    } catch (requestError) {
+      setStatus(requestError instanceof Error ? requestError.message : 'No se pudo eliminar el producto.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   function cancelEditing() {
@@ -212,11 +252,50 @@ export function AdminPage({ productos, categorias, catalogos, onCreated }: Reado
       <section className="admin-products">
         <div className="admin-products-heading"><div><span className="eyebrow">Inventario</span><h2>Productos publicados</h2></div><span>{productos.length} piezas</span></div>
         <div className="row g-3">
-          {productos.map((producto) => <article className="col-12 col-md-6 col-xl-4" key={producto.id}><div className="admin-product-card">{producto.imagenUrl ? <img src={producto.imagenUrl} alt={producto.nombre} /> : <div className="admin-product-placeholder">Sin imagen</div>}<div className="admin-product-info"><span>{producto.codigo}</span><h3>{producto.nombre}</h3><small>{producto.stock ?? 0} disponibles</small><button type="button" className="modify-button" onClick={() => startEditing(producto)}>Modificar <span>↗</span></button></div></div></article>)}
+          {productos.map((producto) => <article className="col-12 col-md-6 col-xl-4" key={producto.id}><div className="admin-product-card">{producto.imagenUrl ? <img src={producto.imagenUrl} alt={producto.nombre} /> : <div className="admin-product-placeholder">Sin imagen</div>}<div className="admin-product-info"><span>{producto.codigo}</span><h3>{producto.nombre}</h3><small>{producto.stock ?? 0} disponibles</small><div className="admin-card-actions"><button type="button" className="modify-button" onClick={() => requestProductAction('edit', producto)}>Modificar <span>↗</span></button><button type="button" className="delete-button" onClick={() => requestProductAction('delete', producto)}>Eliminar</button></div></div></div></article>)}
         </div>
       </section>
 
       {status && <p className="form-status admin-status">{status}</p>}
+
+      {pendingAction && pendingProduct && <AdminProductDialog title={pendingAction === 'edit' ? '¿Deseas modificar este producto?' : '¿Deseas eliminar este producto?'} producto={pendingProduct} confirmLabel={pendingAction === 'edit' ? 'Modificar producto' : 'Eliminar producto'} danger={pendingAction === 'delete'} onClose={() => { setPendingAction(null); setPendingProduct(null) }} onConfirm={() => void confirmProductAction()} />}
+      {completedProduct && <AdminProductDialog title={completedProduct.action === 'created' ? 'Producto creado exitosamente' : 'Producto modificado exitosamente'} producto={completedProduct.product} confirmLabel="Cerrar" onClose={() => setCompletedProduct(null)} onConfirm={() => setCompletedProduct(null)} />}
     </section>
+  )
+}
+
+type AdminProductDialogProps = {
+  title: string
+  producto: Producto
+  confirmLabel: string
+  danger?: boolean
+  onClose: () => void
+  onConfirm: () => void
+}
+
+function AdminProductDialog({ title, producto, confirmLabel, danger = false, onClose, onConfirm }: Readonly<AdminProductDialogProps>) {
+  return (
+    <dialog open className="admin-dialog-overlay">
+      <div className="admin-dialog">
+        <button type="button" className="admin-dialog-close" onClick={onClose} aria-label="Cerrar">×</button>
+        <span className="eyebrow">Detalle del producto</span>
+        <h2>{title}</h2>
+        <div className="admin-dialog-product">
+          {producto.imagenUrl ? <img src={producto.imagenUrl} alt={producto.nombre} /> : <div className="admin-product-placeholder">Sin imagen</div>}
+          <div className="admin-dialog-details">
+            <strong>{producto.nombre}</strong>
+            <span><b>Código:</b> {producto.codigo}</span>
+            <span><b>Tipo:</b> {producto.tipoProducto ?? 'Sin especificar'}</span>
+            <span><b>Estado:</b> {producto.estado ?? 'Sin especificar'}</span>
+            <span><b>Disponibilidad:</b> {producto.stock ?? 0} unidades</span>
+            <span><b>Color:</b> {producto.color || 'Sin especificar'}</span>
+            <span><b>Terminación:</b> {producto.terminacion || 'Sin especificar'}</span>
+            <span><b>Medidas:</b> {producto.ancho ?? '-'} m x {producto.altura ?? '-'} m</span>
+            <span><b>Descripción:</b> {producto.descripcion || 'Sin descripción'}</span>
+          </div>
+        </div>
+        <div className="admin-dialog-actions"><button type="button" className={danger ? 'btn btn-danger rounded-0 px-4 py-3' : 'btn btn-dark rounded-0 px-4 py-3'} onClick={onConfirm}>{confirmLabel}</button><button type="button" className="btn btn-outline-dark rounded-0 px-4 py-3" onClick={onClose}>Cancelar</button></div>
+      </div>
+    </dialog>
   )
 }
