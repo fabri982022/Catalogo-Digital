@@ -180,6 +180,7 @@ APP_CORS_ALLOWED_ORIGIN=http://localhost:5173
 SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/catalogo_digital?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
 SPRING_DATASOURCE_USERNAME=root
 SPRING_DATASOURCE_PASSWORD=...
+APP_SEED_ENABLED=true
 
 # Cloudinary
 CLOUDINARY_CLOUD_NAME=...
@@ -201,6 +202,8 @@ NEXTCLOUD_BACKUP_PATH=Backups/Base-de-datos
 # Backup
 BACKUP_INTERVAL_SECONDS=21600
 ```
+
+En producción, configura `APP_SEED_ENABLED=false` para que los reinicios y despliegues no vuelvan a cargar datos precargados ni modifiquen los registros existentes. En desarrollo local puede mantenerse en `true`.
 
 ## Funcionalidad principal
 
