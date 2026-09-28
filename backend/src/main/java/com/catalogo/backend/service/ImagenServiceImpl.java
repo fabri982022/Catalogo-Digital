@@ -96,6 +96,10 @@ public class ImagenServiceImpl implements ImagenService {
             imagen.setOrden(orden);
             imagen.setProducto(producto);
 
+            if (Boolean.TRUE.equals(esPrincipal)) {
+                producto.getImagenes().forEach(existingImage -> existingImage.setEsPrincipal(false));
+            }
+
             return imagenMapper.toDto(imagenRepository.save(imagen));
         } catch (IOException exception) {
             throw new IllegalStateException(

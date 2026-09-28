@@ -30,6 +30,11 @@ export async function fetchCatalogData() {
   }
 }
 
+export async function fetchProduct(productId: number) {
+  const response = await fetch(`${apiUrl}/productos/${productId}`)
+  return parseResponse<Producto>(response)
+}
+
 export async function authenticate(username: string, password: string): Promise<Usuario> {
   const credentials = `${username}:${password}`
   const authorization = `Basic ${btoa(credentials)}`
@@ -94,7 +99,7 @@ export async function createProduct(form: AdminProductForm) {
   return producto
 }
 
-export async function updateProduct(productId: number, form: AdminProductForm, stockId?: number) {
+export async function updateProduct(productId: number, form: AdminProductForm) {
   const catalogoId = Number(form.catalogoId)
   const categoriaId = Number(form.categoriaId)
   const stock = Number(form.stock)
@@ -119,18 +124,22 @@ export async function updateProduct(productId: number, form: AdminProductForm, s
       categoriaId,
       tipoProducto: form.tipoProducto,
       destacado: false,
+      stock,
     }),
   })
 
-  const producto = await parseResponse<Producto>(response)
-  if (stockId) {
-    await parseResponse(await fetch(`${apiUrl}/stocks/${stockId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', ...adminHeaders() },
-      body: JSON.stringify({ productId, cantidadDisponible: stock, permiteBajoPedido: false }),
-    }))
+  return parseResponse<Producto>(response)
+}
+
+export async function deleteProduct(productId: number) {
+  const response = await fetch(`${apiUrl}/productos/${productId}`, {
+    method: 'DELETE',
+    headers: adminHeaders(),
+  })
+
+  if (!response.ok) {
+    throw new Error(`La solicitud fallo (${response.status}).`)
   }
-  return producto
 }
 
 export async function uploadProductImage(productId: number, image: File, order: number) {

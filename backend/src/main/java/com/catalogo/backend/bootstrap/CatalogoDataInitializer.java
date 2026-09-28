@@ -29,15 +29,19 @@ public class CatalogoDataInitializer {
     CommandLineRunner seedCatalogo(UsuarioRepository usuarios, RolRepository roles, UsuarioRolRepository usuariosRoles,
             CatalogoRepository catalogos, CategoriaRepository categorias, ProductoRepository productos,
             StockRepository stocks, @Value("${app.seed.admin-username:admin}") String adminUsername,
-            @Value("${app.seed.admin-password:admin1234}") String adminPassword) {
+            @Value("${app.seed.admin-password:admin1234}") String adminPassword,
+            @Value("${app.seed.enabled:true}") boolean seedEnabled) {
         return args -> initialize(usuarios, roles, usuariosRoles, catalogos, categorias, productos, stocks,
-                adminUsername, adminPassword);
+                adminUsername, adminPassword, seedEnabled);
     }
 
     @Transactional
     void initialize(UsuarioRepository usuarios, RolRepository roles, UsuarioRolRepository usuariosRoles,
             CatalogoRepository catalogos, CategoriaRepository categorias, ProductoRepository productos,
-            StockRepository stocks, String adminUsername, String adminPassword) {
+            StockRepository stocks, String adminUsername, String adminPassword, boolean seedEnabled) {
+        if (!seedEnabled) {
+            return;
+        }
         Rol adminRole = roles.findAll().stream().filter(role -> "ADMIN".equalsIgnoreCase(role.getNombre())).findFirst()
                 .orElseGet(() -> {
                     Rol role = new Rol();
