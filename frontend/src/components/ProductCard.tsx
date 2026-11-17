@@ -46,6 +46,7 @@ export function ProductCard({ producto, index, onSelect }: ProductCardProps) {
 
         <a
           className="whatsapp-button"
+          data-golondrina="consultar-whatsapp"
           href={productWhatsappUrl(producto)}
           target="_blank"
           rel="noreferrer"

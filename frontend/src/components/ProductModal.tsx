@@ -19,7 +19,7 @@ export function ProductModal({ producto, onClose }: ProductModalProps) {
           <h2>{producto.nombre}</h2>
           <p>{producto.descripcion || 'Una pieza pensada para acompañar proyectos duraderos.'}</p>
           <div className="dialog-stock">{producto.stock ?? 0} unidades disponibles</div>
-          <a className="whatsapp-button" href={productWhatsappUrl(producto)} target="_blank" rel="noreferrer">Consultar por WhatsApp <span>↗</span></a>
+          <a className="whatsapp-button" data-golondrina="consultar-whatsapp" href={productWhatsappUrl(producto)} target="_blank" rel="noreferrer">Consultar por WhatsApp <span>↗</span></a>
         </div>
       </div>
     </div>

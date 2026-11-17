@@ -25,19 +25,19 @@ export function Navbar({ usuario, view, onNavigate, onLogout }: NavbarProps) {
 
         <div className="collapse navbar-collapse" id="mainNav">
           <div className="navbar-nav mx-auto gap-lg-2">
-            <NavButton active={view === 'catalogo'} onClick={() => onNavigate('catalogo')}>Explorar</NavButton>
-            <NavButton active={view === 'categorias'} onClick={() => onNavigate('categorias')}>Colecciones</NavButton>
-            {usuario && <NavButton active={view === 'admin'} onClick={() => onNavigate('admin')}>Gestion</NavButton>}
+            <NavButton active={view === 'catalogo'} golondrina="ver-todo" onClick={() => onNavigate('catalogo')}>Explorar</NavButton>
+            <NavButton active={view === 'categorias'} golondrina="ver-colecciones" onClick={() => onNavigate('categorias')}>Colecciones</NavButton>
+            {usuario && <NavButton active={view === 'admin'} golondrina="ir-gestion" onClick={() => onNavigate('admin')}>Gestion</NavButton>}
           </div>
 
           {usuario ? (
             <div className="user-menu">
               <span className="user-dot">{usuario.nombreUsuario.slice(0, 1).toUpperCase()}</span>
               <span>{usuario.nombreUsuario}</span>
-              <button onClick={onLogout}>Salir</button>
+              <button data-golondrina="cerrar-sesion" onClick={onLogout}>Salir</button>
             </div>
           ) : (
-            <button className="login-link" onClick={() => onNavigate('login')}>Acceder -&gt;</button>
+            <button className="login-link" data-golondrina="ingresar" onClick={() => onNavigate('login')}>Acceder -&gt;</button>
           )}
         </div>
       </div>
@@ -45,6 +45,6 @@ export function Navbar({ usuario, view, onNavigate, onLogout }: NavbarProps) {
   )
 }
 
-function NavButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: string }) {
-  return <button className={`nav-link ${active ? 'active' : ''}`} onClick={onClick}>{children}</button>
+function NavButton({ active, onClick, children, golondrina }: { active: boolean; onClick: () => void; children: string; golondrina?: string }) {
+  return <button className={`nav-link ${active ? 'active' : ''}`} data-golondrina={golondrina} onClick={onClick}>{children}</button>
 }

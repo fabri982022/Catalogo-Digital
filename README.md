@@ -308,3 +308,7 @@ También se recomienda revisar:
 ---
 
 Proyecto desarrollado como catálogo digital con backend, frontend, base de datos, servicios documentales y backups automatizados.
+
+## Asistente Golondrina
+
+Este sistema incluye **Golondrina**: un asistente al que se le piden las cosas con palabras propias y una automatización que aprende por repetición y contexto lo que hace cada usuario, para mostrárselo en el momento justo. Ver [GOLONDRINA.md](GOLONDRINA.md).
