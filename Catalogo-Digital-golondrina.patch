@@ -1,0 +1,2362 @@
+From 31709472d3fd633bcc355732712154b5a52728f9 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 17 Nov 2026 03:37:48 +0000
+Subject: [PATCH] =?UTF-8?q?Agrega=20asistente=20y=20automatizaci=C3=B3n=20?=
+ =?UTF-8?q?Golondrina?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+El usuario le pide acciones al asistente con lenguaje natural y Golondrina
+aprende por repetición y contexto (secuencias, hábitos por horario, entrada,
+atajos y funciones por descubrir) para mostrárselas en el momento oportuno.
+Memoria local por usuario, con «¿qué aprendiste?», «no me sugieras» y «olvidá todo».
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NCBapBDV9ct1JVbDH3fh1d
+---
+ GOLONDRINA.md                            |  93 +++++
+ README.md                                |   4 +
+ frontend/src/App.tsx                     |  58 +++-
+ frontend/src/asistente.ts                | 236 +++++++++++++
+ frontend/src/components/Navbar.tsx       |  14 +-
+ frontend/src/components/ProductCard.tsx  |   1 +
+ frontend/src/components/ProductModal.tsx |   2 +-
+ frontend/src/golondrina/aprendizaje.ts   | 261 ++++++++++++++
+ frontend/src/golondrina/index.ts         | 423 +++++++++++++++++++++++
+ frontend/src/golondrina/interprete.ts    | 180 ++++++++++
+ frontend/src/golondrina/memoria.ts       | 246 +++++++++++++
+ frontend/src/golondrina/texto.ts         | 125 +++++++
+ frontend/src/golondrina/tipos.ts         | 123 +++++++
+ frontend/src/golondrina/ui.ts            | 261 ++++++++++++++
+ frontend/src/pages/AdminPage.tsx         |  15 +-
+ frontend/src/pages/CatalogPage.tsx       |  31 +-
+ 16 files changed, 2047 insertions(+), 26 deletions(-)
+ create mode 100644 GOLONDRINA.md
+ create mode 100644 frontend/src/asistente.ts
+ create mode 100644 frontend/src/golondrina/aprendizaje.ts
+ create mode 100644 frontend/src/golondrina/index.ts
+ create mode 100644 frontend/src/golondrina/interprete.ts
+ create mode 100644 frontend/src/golondrina/memoria.ts
+ create mode 100644 frontend/src/golondrina/texto.ts
+ create mode 100644 frontend/src/golondrina/tipos.ts
+ create mode 100644 frontend/src/golondrina/ui.ts
+
+diff --git a/GOLONDRINA.md b/GOLONDRINA.md
+new file mode 100644
+index 0000000..f54bf7f
+--- /dev/null
++++ b/GOLONDRINA.md
+@@ -0,0 +1,93 @@
++# Golondrina — asistente que aprende de cada usuario
++
++Golondrina tiene dos partes que trabajan juntas:
++
++1. **El asistente** (botón con la golondrina). El usuario le pide las cosas con sus palabras («buscame puertas de roble», «abrí Cubaeduca», «decile a Ana que llego tarde») y el asistente ejecuta la acción en el sistema. Ya no hace falta aprender dónde está cada botón.
++2. **La automatización Golondrina**. Observa lo que el usuario hace —a mano o a través del asistente— junto con su **contexto** (pantalla, franja horaria, qué hizo antes) y, cuando algo se **repite**, lo aprende y se lo muestra en el momento justo: la golondrina llega volando con una sugerencia de un toque.
++
++## Qué aprende
++
++| Tipo | Cuándo aparece | Ejemplo |
++|---|---|---|
++| **Secuencia** | Después de X, el usuario casi siempre hace Y | «Cada vez que abrís la ficha de un producto, después seguís con *Consultar por WhatsApp*. ¿Te lo adelanto?» |
++| **Entrada** | Lo primero que hace al llegar, repetido en varias sesiones | «Cada vez que llegás, lo primero que hacés es *Abrir Cubaeduca*.» |
++| **Hábito** | Algo que hace en esta pantalla y a esta hora del día | «Por la mañana solés enviar *buen día gente*. ¿Lo hago por vos?» |
++| **Atajo** | Algo que hace siempre a mano y podría pedírselo al asistente | «Veo que hacés *ver Puertas de interior* seguido. Escribime eso y lo hago yo.» |
++| **Descubrir** | Una función útil que todavía no usó, en la pantalla donde pasa tiempo | «¿Sabías que podés pedirme qué productos se quedaron sin stock?» |
++
++Además, cuando el asistente no está seguro, ofrece opciones; si el usuario elige una, **aprende esa frase** y la próxima vez la entiende directo.
++
++Reglas para no molestar: un hábito necesita **3 repeticiones** (`minRepeticiones`), lo que no se repite se va olvidando (vida media de 14 días), hay al menos 90 s entre sugerencias, cada una descansa 20 min después de mostrarse, y si se rechaza 3 veces o se toca «No me muestres esto de nuevo», no vuelve.
++
++## Privacidad y control del usuario
++
++Todo se guarda **solo en el navegador** del usuario (`localStorage`, clave `golondrina:<app>[:usuario]`); no se envía nada a ningún servidor. El usuario puede escribirle al asistente:
++
++- «¿qué aprendiste?» → le muestra sus hábitos y secuencias aprendidas.
++- «no me sugieras» / «volvé a sugerir» → silencia o reactiva las sugerencias.
++- «olvidá todo» → borra su memoria.
++- «ayuda» → lista lo que puede pedir en la pantalla actual.
++
++## Cómo está armado
++
++```
++golondrina/            ← núcleo común, idéntico en los tres sistemas, sin dependencias
++  tipos.ts             ← Accion, Contexto, Sugerencia, opciones
++  texto.ts             ← normalización del español, sinónimos, raíces, tolerancia a errores
++  interprete.ts        ← convierte una frase en acción + parámetros (motor local, sin IA externa)
++  memoria.ts           ← registra eventos, hábitos, secuencias, frases aprendidas
++  aprendizaje.ts       ← decide qué sugerir según repetición + contexto
++  ui.ts                ← botón, panel y "vuelo" (Shadow DOM: no choca con los estilos del sistema)
++  index.ts             ← clase Golondrina y crearGolondrina()
++```
++
++### Agregar una acción nueva
++
++```ts
++{
++  id: 'buscar',
++  titulo: 'Buscar «{consulta}»',                    // texto de botones; {param} se reemplaza
++  descripcion: 'buscar piezas por nombre o código',  // se usa al enseñar la función
++  frases: ['buscar {consulta}', 'tenés {consulta}'], // ejemplos en lenguaje natural
++  parametros: [{ nombre: 'consulta', libre: true, requerido: true, pregunta: '¿Qué busco?' }],
++  secciones: ['catalogo'],          // opcional: dónde tiene sentido
++  disponible: (ctx) => true,        // opcional: si hoy se puede hacer
++  requisito: 'Primero ingresá…',    // opcional: qué falta cuando no está disponible
++  descubrible: true,                // opcional: Golondrina puede enseñarla
++  ejecutar: ({ consulta }) => { /* hacer la acción */ return 'Texto de respuesta' },
++}
++```
++
++Parámetros: `opciones: () => string[]` (se reconocen dentro de la frase, con o sin acentos/plurales) o `libre: true` (toma el texto que sigue a la frase). `memorizable: false` evita que un valor forme parte del hábito.
++
++### Registrar lo que el usuario hace a mano
++
++- En código: `asistente.registrar('filtrar-categoria', { categoria: 'Puertas' })`.
++- Sin código: agregar atributos al elemento → `data-golondrina="abrir-plataforma" data-golondrina-plataforma="Cubaeduca"`.
++- Contexto: `asistente.contexto('admin', { producto: 'Puerta Roble' })` cada vez que cambia la pantalla.
++
++### Conectar una IA (opcional)
++
++El intérprete local cubre las frases de las acciones. Si se quiere entender lenguaje más libre, se puede pasar `interpretar: async (texto, acciones, ctx) => ({ accion, parametros })` al crear Golondrina (por ejemplo llamando a un modelo de lenguaje desde el backend). Solo se usa cuando el motor local no está seguro.
++
++## En este sistema (Catálogo Digital)
++
++- Núcleo: `frontend/src/golondrina/` · Acciones del catálogo: `frontend/src/asistente.ts`.
++- `App.tsx` monta Golondrina, le pasa las acciones con el estado actual, informa el contexto (pantalla, producto abierto, categoría elegida) y separa la memoria por administrador.
++- Para que el asistente pueda buscar y filtrar, la búsqueda y la categoría activa ahora viven en `App.tsx` (antes eran estado interno de `CatalogPage`).
++- `AdminPage` acepta `productToEdit` para que el asistente cargue un producto en el formulario.
++- Se registran: filtros de categoría, apertura de productos, búsquedas (cuando el usuario deja de escribir), consultas por WhatsApp, navegación y altas/ediciones en gestión.
++
++| Pedido de ejemplo | Acción |
++|---|---|
++| «buscame algo de aluminio» | Busca y muestra los resultados |
++| «mostrame las puertas de exterior» | Filtra por categoría |
++| «abrí la puerta pivotante negra» | Abre la ficha del producto |
++| «quiero comprarla» / «consultar por WhatsApp» | Abre WhatsApp con el mensaje armado del producto abierto |
++| «¿cuántos productos hay?» | Resumen por categoría |
++| «ver colecciones» / «ver todo» | Navega |
++| «ingresar» | Lleva al acceso de gestión |
++| «nuevo producto» / «modificar Puerta Roble» (gestión) | Abre el formulario vacío o cargado |
++| «productos sin stock» (gestión) | Lista lo agotado y lo que queda con 3 o menos |
++
++Lo que aprende acá: categorías que cada visitante mira primero, la secuencia «ver producto → consultar por WhatsApp» (y se la adelanta), y en gestión las tareas que el administrador repite.
+diff --git a/README.md b/README.md
+index e9b3176..ce6670d 100644
+--- a/README.md
++++ b/README.md
+@@ -308,3 +308,7 @@ También se recomienda revisar:
+ ---
+ 
+ Proyecto desarrollado como catálogo digital con backend, frontend, base de datos, servicios documentales y backups automatizados.
++
++## Asistente Golondrina
++
++Este sistema incluye **Golondrina**: un asistente al que se le piden las cosas con palabras propias y una automatización que aprende por repetición y contexto lo que hace cada usuario, para mostrárselo en el momento justo. Ver [GOLONDRINA.md](GOLONDRINA.md).
+diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
+index 79141f4..f8e1b4a 100644
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -1,4 +1,5 @@
+ import { useEffect, useState } from 'react'
++import { accionesDelCatalogo, asistente } from './asistente'
+ import './App.css'
+ import './responsive.css'
+ import { clearAuthentication, fetchCatalogData } from './api'
+@@ -25,7 +26,9 @@ function readInitialCategory(): number | null {
+ 
+ function App() {
+   const [view, setView] = useState<View>(readInitialView)
+-  const [initialCategory, setInitialCategory] = useState<number | null>(readInitialCategory)
++  const [activeCategory, setActiveCategory] = useState<number | null>(readInitialCategory)
++  const [search, setSearch] = useState('')
++  const [productToEdit, setProductToEdit] = useState<{ id: number; request: number } | null>(null)
+   const [productos, setProductos] = useState<Producto[]>([])
+   const [categorias, setCategorias] = useState<Categoria[]>([])
+   const [catalogos, setCatalogos] = useState<Catalogo[]>([])
+@@ -38,12 +41,55 @@ function App() {
+     void loadCatalog()
+     const handleHistory = () => {
+       setView(readInitialView())
+-      setInitialCategory(readInitialCategory())
++      setActiveCategory(readInitialCategory())
+     }
+     window.addEventListener('popstate', handleHistory)
+     return () => window.removeEventListener('popstate', handleHistory)
+   }, [])
+ 
++  // Golondrina: asistente + automatización que aprende de lo que hace cada usuario.
++  useEffect(() => {
++    asistente.montar()
++    return () => asistente.destruir()
++  }, [])
++
++  // En cada render el asistente recibe las acciones con el estado actual.
++  // (Sin dependencias a propósito: solo actualiza closures, no cambia estado.)
++  // eslint-disable-next-line react-hooks/exhaustive-deps
++  useEffect(() => {
++    asistente.definirAcciones(accionesDelCatalogo({
++      view, usuario, productos, categorias, seleccionado: selectedProduct,
++      navigate, setSearch, setSelectedProduct, logout,
++      editarProducto: (id) => setProductToEdit({ id, request: Date.now() }),
++      recargar: loadCatalog,
++    }))
++  })
++
++  // Contexto: pantalla actual, producto abierto y categoría elegida.
++  useEffect(() => {
++    asistente.contexto(view, {
++      producto: selectedProduct?.nombre ?? null,
++      categoria: categorias.find((c) => c.id === activeCategory)?.nombre ?? null,
++    })
++  }, [view, selectedProduct, activeCategory, categorias])
++
++  // Cada administrador tiene su propia memoria de hábitos.
++  useEffect(() => {
++    asistente.usuario(usuario?.nombreUsuario ?? null)
++  }, [usuario?.nombreUsuario])
++
++  function chooseCategory(categoryId: number | null) {
++    const categoria = categorias.find((c) => c.id === categoryId)
++    if (categoria) asistente.registrar('filtrar-categoria', { categoria: categoria.nombre })
++    else asistente.registrar('ver-todo')
++    setActiveCategory(categoryId)
++  }
++
++  function openProduct(producto: Producto) {
++    asistente.registrar('ver-producto', { producto: producto.nombre })
++    setSelectedProduct(producto)
++  }
++
+   async function loadCatalog() {
+     setLoading(true)
+     try {
+@@ -63,7 +109,7 @@ function App() {
+     const query = categoryId ? `?categoria=${categoryId}` : ''
+     window.history.pushState({}, '', `#/${nextView}${query}`)
+     setView(nextView)
+-    setInitialCategory(categoryId ?? null)
++    setActiveCategory(categoryId ?? null)
+   }
+ 
+   function login(nextUser: Usuario) {
+@@ -84,12 +130,12 @@ function App() {
+       return <LoginPage onLogin={login} onBack={() => navigate('catalogo')} />
+     }
+     if (view === 'admin' && usuario) {
+-      return <AdminPage productos={productos} categorias={categorias} catalogos={catalogos} onCreated={loadCatalog} />
++      return <AdminPage productos={productos} categorias={categorias} catalogos={catalogos} onCreated={loadCatalog} productToEdit={productToEdit} />
+     }
+     if (view === 'categorias') {
+-      return <CategoriesPage categorias={categorias} onSelect={(categoryId) => navigate('catalogo', categoryId)} />
++      return <CategoriesPage categorias={categorias} onSelect={(categoryId) => { chooseCategory(categoryId); navigate('catalogo', categoryId) }} />
+     }
+-    return <CatalogPage productos={productos} categorias={categorias} initialCategory={initialCategory} cargando={loading} error={error} onRefresh={loadCatalog} onSelect={setSelectedProduct} />
++    return <CatalogPage productos={productos} categorias={categorias} search={search} onSearchChange={setSearch} activeCategory={activeCategory} onCategoryChange={chooseCategory} cargando={loading} error={error} onRefresh={loadCatalog} onSelect={openProduct} />
+   }
+ 
+   const page = renderPage()
+diff --git a/frontend/src/asistente.ts b/frontend/src/asistente.ts
+new file mode 100644
+index 0000000..03ec6c1
+--- /dev/null
++++ b/frontend/src/asistente.ts
+@@ -0,0 +1,236 @@
++import { Golondrina, type Accion } from './golondrina'
++import type { Categoria, Producto, Usuario, View } from './types'
++import { productWhatsappUrl } from './utils/catalog'
++
++/**
++ * Instancia única del asistente + Golondrina para el catálogo.
++ * App.tsx la monta y le pasa las acciones; los componentes registran lo que el
++ * usuario hace a mano para que Golondrina aprenda sus costumbres.
++ */
++export const asistente = new Golondrina({
++  app: 'catalogo-digital',
++  acciones: [],
++  colorPrimario: '#111111',
++  saludo:
++    '¡Hola! Soy Golondrina. Decime qué buscás («puertas de madera», «ventanas corredizas») y te lo muestro, ' +
++    'o pedime consultar un producto por WhatsApp. Con el uso aprendo qué mirás y te lo dejo a mano.',
++})
++
++export type EstadoCatalogo = {
++  view: View
++  usuario: Usuario | null
++  productos: Producto[]
++  categorias: Categoria[]
++  seleccionado: Producto | null
++  navigate: (view: View, categoryId?: number) => void
++  setSearch: (search: string) => void
++  setSelectedProduct: (producto: Producto | null) => void
++  editarProducto: (productoId: number) => void
++  recargar: () => Promise<void> | void
++  logout: () => void
++}
++
++export function coincideBusqueda(producto: Producto, busqueda: string) {
++  return `${producto.nombre} ${producto.codigo} ${producto.descripcion ?? ''}`.toLowerCase().includes(busqueda.toLowerCase())
++}
++
++function irAGrilla() {
++  setTimeout(() => document.getElementById('catalogo-grid')?.scrollIntoView({ behavior: 'smooth' }), 80)
++}
++
++function piezas(n: number) {
++  return n === 1 ? '1 pieza' : `${n} piezas`
++}
++
++export function accionesDelCatalogo(estado: EstadoCatalogo): Accion[] {
++  const { usuario, productos, categorias, seleccionado } = estado
++  const nombresProductos = () => productos.map((p) => p.nombre)
++  const nombresCategorias = () => categorias.map((c) => c.nombre)
++  const buscarProducto = (nombre: string | undefined) => productos.find((p) => p.nombre === nombre)
++  const esAdmin = () => !!usuario
++
++  return [
++    {
++      id: 'buscar',
++      titulo: 'Buscar «{consulta}»',
++      descripcion: 'buscar piezas por nombre, código o descripción',
++      frases: ['buscar {consulta}', 'tenés {consulta}', 'quiero ver {consulta}', 'busco {consulta}'],
++      parametros: [{ nombre: 'consulta', libre: true, requerido: true, pregunta: '¿Qué busco?' }],
++      ejecutar: ({ consulta }) => {
++        estado.navigate('catalogo')
++        estado.setSearch(consulta)
++        irAGrilla()
++        const n = productos.filter((p) => coincideBusqueda(p, consulta)).length
++        return n ? `Encontré ${piezas(n)} para «${consulta}».` : `No encontré nada para «${consulta}». Probá con otra palabra o pedime «ver todo».`
++      },
++    },
++    {
++      id: 'filtrar-categoria',
++      titulo: 'Ver {categoria}',
++      descripcion: 'ver solo una categoría',
++      frases: ['ver {categoria}', 'mostrar {categoria}', 'filtrar por {categoria}', 'categoría {categoria}'],
++      parametros: [{ nombre: 'categoria', opciones: nombresCategorias, requerido: true, pregunta: '¿Qué categoría?' }],
++      ejecutar: ({ categoria }) => {
++        const cat = categorias.find((c) => c.nombre === categoria)
++        if (!cat) return `No encontré la categoría ${categoria}.`
++        estado.setSearch('')
++        estado.navigate('catalogo', cat.id)
++        irAGrilla()
++        return `Te muestro ${categoria}: ${piezas(productos.filter((p) => p.categoriaId === cat.id).length)}.`
++      },
++    },
++    {
++      id: 'ver-todo',
++      titulo: 'Ver todo el catálogo',
++      frases: ['ver todo', 'mostrar todo el catálogo', 'quitar filtros', 'limpiar búsqueda'],
++      ejecutar: () => {
++        estado.setSearch('')
++        estado.navigate('catalogo')
++        irAGrilla()
++        return `Todo el catálogo: ${piezas(productos.length)}.`
++      },
++    },
++    {
++      id: 'ver-producto',
++      titulo: 'Abrir {producto}',
++      descripcion: 'abrir la ficha de un producto',
++      frases: ['abrir {producto}', 'ver {producto}', 'detalle de {producto}', 'mostrame {producto}'],
++      parametros: [{ nombre: 'producto', opciones: nombresProductos, requerido: true, pregunta: '¿Qué producto?' }],
++      ejecutar: ({ producto }) => {
++        const p = buscarProducto(producto)
++        if (!p) return `No encontré «${producto}».`
++        estado.setSelectedProduct(p)
++        return `Abrí ${p.nombre} (${p.codigo}). Hay ${p.stock ?? 0} disponibles.`
++      },
++    },
++    {
++      id: 'consultar-whatsapp',
++      titulo: 'Consultar por WhatsApp',
++      descripcion: 'consultar un producto por WhatsApp con el mensaje ya escrito',
++      frases: ['consultar por whatsapp {producto}', 'preguntar por {producto}', 'hablar con un vendedor', 'quiero comprar {producto}'],
++      // El producto no forma parte del hábito: lo que se aprende es "después de mirar, consulto".
++      parametros: [{ nombre: 'producto', opciones: nombresProductos, memorizable: false }],
++      descubrible: true,
++      comoHacerlo: 'Está el botón «Consultar» en cada producto.',
++      ejecutar: ({ producto }) => {
++        const p = buscarProducto(producto) ?? seleccionado
++        if (!p) return 'Decime sobre qué producto («consultar por WhatsApp la puerta…») o abrí uno y te lo envío.'
++        window.open(productWhatsappUrl(p), '_blank', 'noopener')
++        return `Abrí WhatsApp con la consulta por ${p.nombre}.`
++      },
++    },
++    {
++      id: 'ver-colecciones',
++      titulo: 'Ver colecciones',
++      frases: ['ver colecciones', 'qué categorías hay', 'mostrar categorías'],
++      ejecutar: () => {
++        estado.navigate('categorias')
++        return `Hay ${categorias.length} colecciones: ${nombresCategorias().join(', ')}.`
++      },
++    },
++    {
++      id: 'ingresar',
++      titulo: 'Ingresar a gestión',
++      frases: ['iniciar sesión', 'ingresar a gestión', 'entrar como administrador', 'login'],
++      disponible: () => !esAdmin(),
++      ejecutar: () => {
++        estado.navigate('login')
++        return 'Te llevé al acceso. Ingresá tu usuario y contraseña.'
++      },
++    },
++    {
++      id: 'ir-gestion',
++      titulo: 'Ir a gestión',
++      frases: ['ir a gestión', 'abrir administración', 'panel de administración'],
++      disponible: esAdmin,
++      requisito: 'Primero ingresá a gestión (botón «Acceder» arriba a la derecha, o pedime «ingresar»).',
++      ejecutar: () => {
++        estado.navigate('admin')
++        return 'Estás en el área de gestión.'
++      },
++    },
++    {
++      id: 'nuevo-producto',
++      titulo: 'Cargar un producto nuevo',
++      descripcion: 'cargar un producto nuevo',
++      frases: ['nuevo producto', 'cargar producto', 'agregar producto', 'dar de alta un producto'],
++      disponible: esAdmin,
++      requisito: 'Primero ingresá a gestión (botón «Acceder» arriba a la derecha, o pedime «ingresar»).',
++      descubrible: true,
++      ejecutar: () => {
++        estado.navigate('admin')
++        setTimeout(() => {
++          const campo = document.querySelector<HTMLInputElement>('.admin-form input')
++          campo?.scrollIntoView({ behavior: 'smooth', block: 'center' })
++          campo?.focus()
++        }, 120)
++        return 'Listo, el formulario está abierto. Empezá por el código.'
++      },
++    },
++    {
++      id: 'editar-producto',
++      titulo: 'Modificar {producto}',
++      descripcion: 'modificar un producto ya publicado',
++      frases: ['editar {producto}', 'modificar {producto}', 'cambiar {producto}', 'actualizar {producto}'],
++      parametros: [{ nombre: 'producto', opciones: nombresProductos, requerido: true, pregunta: '¿Qué producto querés modificar?' }],
++      disponible: esAdmin,
++      requisito: 'Primero ingresá a gestión (botón «Acceder» arriba a la derecha, o pedime «ingresar»).',
++      ejecutar: ({ producto }) => {
++        const p = buscarProducto(producto)
++        if (!p) return `No encontré «${producto}».`
++        estado.navigate('admin')
++        estado.editarProducto(p.id)
++        return `Cargué ${p.nombre} en el formulario para modificarlo.`
++      },
++    },
++    {
++      id: 'sin-stock',
++      titulo: 'Productos sin stock',
++      descripcion: 'preguntarme qué productos se quedaron sin stock',
++      frases: ['productos sin stock', 'qué falta reponer', 'qué se agotó', 'stock bajo'],
++      disponible: esAdmin,
++      requisito: 'Primero ingresá a gestión (botón «Acceder» arriba a la derecha, o pedime «ingresar»).',
++      descubrible: true,
++      ejecutar: () => {
++        const agotados = productos.filter((p) => (p.stock ?? 0) === 0 || p.estado === 'SIN_STOCK')
++        const bajos = productos.filter((p) => (p.stock ?? 0) > 0 && (p.stock ?? 0) <= 3)
++        if (!agotados.length && !bajos.length) return 'Todo tiene stock. 👌'
++        const lineas = [
++          ...agotados.map((p) => `• ${p.nombre} (${p.codigo}): sin stock`),
++          ...bajos.map((p) => `• ${p.nombre} (${p.codigo}): quedan ${p.stock}`),
++        ]
++        return `Para reponer:\n${lineas.slice(0, 10).join('\n')}`
++      },
++    },
++    {
++      id: 'resumen',
++      titulo: 'Resumen del catálogo',
++      descripcion: 'pedirme un resumen del catálogo por categoría',
++      frases: ['cuántos productos hay', 'resumen del catálogo', 'cuántas piezas hay'],
++      ejecutar: () => {
++        const lineas = categorias.map((c) => `• ${c.nombre}: ${productos.filter((p) => p.categoriaId === c.id).length}`)
++        return `Hay ${piezas(productos.length)} en total.\n${lineas.join('\n')}`
++      },
++    },
++    {
++      id: 'actualizar',
++      titulo: 'Actualizar el catálogo',
++      frases: ['actualizar catálogo', 'recargar', 'refrescar'],
++      ejecutar: async () => {
++        await estado.recargar()
++        return 'Catálogo actualizado.'
++      },
++    },
++    {
++      id: 'cerrar-sesion',
++      titulo: 'Cerrar sesión',
++      frases: ['cerrar sesión', 'salir de gestión', 'desconectarme'],
++      disponible: esAdmin,
++      requisito: 'Primero ingresá a gestión (botón «Acceder» arriba a la derecha, o pedime «ingresar»).',
++      ejecutar: () => {
++        estado.logout()
++        return 'Cerraste sesión.'
++      },
++    },
++  ]
++}
+diff --git a/frontend/src/components/Navbar.tsx b/frontend/src/components/Navbar.tsx
+index 311cce9..82a5e1f 100644
+--- a/frontend/src/components/Navbar.tsx
++++ b/frontend/src/components/Navbar.tsx
+@@ -25,19 +25,19 @@ export function Navbar({ usuario, view, onNavigate, onLogout }: NavbarProps) {
+ 
+         <div className="collapse navbar-collapse" id="mainNav">
+           <div className="navbar-nav mx-auto gap-lg-2">
+-            <NavButton active={view === 'catalogo'} onClick={() => onNavigate('catalogo')}>Explorar</NavButton>
+-            <NavButton active={view === 'categorias'} onClick={() => onNavigate('categorias')}>Colecciones</NavButton>
+-            {usuario && <NavButton active={view === 'admin'} onClick={() => onNavigate('admin')}>Gestion</NavButton>}
++            <NavButton active={view === 'catalogo'} golondrina="ver-todo" onClick={() => onNavigate('catalogo')}>Explorar</NavButton>
++            <NavButton active={view === 'categorias'} golondrina="ver-colecciones" onClick={() => onNavigate('categorias')}>Colecciones</NavButton>
++            {usuario && <NavButton active={view === 'admin'} golondrina="ir-gestion" onClick={() => onNavigate('admin')}>Gestion</NavButton>}
+           </div>
+ 
+           {usuario ? (
+             <div className="user-menu">
+               <span className="user-dot">{usuario.nombreUsuario.slice(0, 1).toUpperCase()}</span>
+               <span>{usuario.nombreUsuario}</span>
+-              <button onClick={onLogout}>Salir</button>
++              <button data-golondrina="cerrar-sesion" onClick={onLogout}>Salir</button>
+             </div>
+           ) : (
+-            <button className="login-link" onClick={() => onNavigate('login')}>Acceder -&gt;</button>
++            <button className="login-link" data-golondrina="ingresar" onClick={() => onNavigate('login')}>Acceder -&gt;</button>
+           )}
+         </div>
+       </div>
+@@ -45,6 +45,6 @@ export function Navbar({ usuario, view, onNavigate, onLogout }: NavbarProps) {
+   )
+ }
+ 
+-function NavButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: string }) {
+-  return <button className={`nav-link ${active ? 'active' : ''}`} onClick={onClick}>{children}</button>
++function NavButton({ active, onClick, children, golondrina }: { active: boolean; onClick: () => void; children: string; golondrina?: string }) {
++  return <button className={`nav-link ${active ? 'active' : ''}`} data-golondrina={golondrina} onClick={onClick}>{children}</button>
+ }
+diff --git a/frontend/src/components/ProductCard.tsx b/frontend/src/components/ProductCard.tsx
+index 8e4fae6..f4b8939 100644
+--- a/frontend/src/components/ProductCard.tsx
++++ b/frontend/src/components/ProductCard.tsx
+@@ -46,6 +46,7 @@ export function ProductCard({ producto, index, onSelect }: ProductCardProps) {
+ 
+         <a
+           className="whatsapp-button"
++          data-golondrina="consultar-whatsapp"
+           href={productWhatsappUrl(producto)}
+           target="_blank"
+           rel="noreferrer"
+diff --git a/frontend/src/components/ProductModal.tsx b/frontend/src/components/ProductModal.tsx
+index cd3468a..53c3b1b 100644
+--- a/frontend/src/components/ProductModal.tsx
++++ b/frontend/src/components/ProductModal.tsx
+@@ -19,7 +19,7 @@ export function ProductModal({ producto, onClose }: ProductModalProps) {
+           <h2>{producto.nombre}</h2>
+           <p>{producto.descripcion || 'Una pieza pensada para acompañar proyectos duraderos.'}</p>
+           <div className="dialog-stock">{producto.stock ?? 0} unidades disponibles</div>
+-          <a className="whatsapp-button" href={productWhatsappUrl(producto)} target="_blank" rel="noreferrer">Consultar por WhatsApp <span>↗</span></a>
++          <a className="whatsapp-button" data-golondrina="consultar-whatsapp" href={productWhatsappUrl(producto)} target="_blank" rel="noreferrer">Consultar por WhatsApp <span>↗</span></a>
+         </div>
+       </div>
+     </div>
+diff --git a/frontend/src/golondrina/aprendizaje.ts b/frontend/src/golondrina/aprendizaje.ts
+new file mode 100644
+index 0000000..865d4ce
+--- /dev/null
++++ b/frontend/src/golondrina/aprendizaje.ts
+@@ -0,0 +1,261 @@
++/**
++ * Aprendizaje de Golondrina: convierte la memoria (repeticiones + contexto)
++ * en sugerencias concretas para el momento actual.
++ */
++import { decaer, firmaDe, franjaDe, VENTANA_SECUENCIA_MS, type Habito, type Memoria } from './memoria'
++import type { Accion, Contexto, Franja, Parametros, Sugerencia } from './tipos'
++
++export const NOMBRE_FRANJA: Record<Franja, string> = {
++  madrugada: 'de madrugada',
++  manana: 'por la mañana',
++  tarde: 'por la tarde',
++  noche: 'por la noche',
++}
++
++/** Minutos que una sugerencia descansa después de mostrarse. */
++const DESCANSO_MS = 20 * 60 * 1000
++
++export function tituloDe(accion: Accion, parametros: Parametros): string {
++  return accion.titulo
++    .replace(/\{(\w+)\}/g, (_, nombre: string) => parametros[nombre] ?? '')
++    .replace(/\s+/g, ' ')
++    .trim()
++}
++
++/** Entre comillas «», salvo que el texto ya las tenga. */
++function cita(texto: string) {
++  return texto.includes('«') ? texto : `«${texto}»`
++}
++
++function minuscula(texto: string) {
++  return texto.charAt(0).toLowerCase() + texto.slice(1)
++}
++
++function aplica(accion: Accion, ctx: Contexto): boolean {
++  if (accion.secciones?.length && !accion.secciones.includes(ctx.seccion)) return false
++  try {
++    return accion.disponible ? accion.disponible(ctx) : true
++  } catch {
++    return false
++  }
++}
++
++export interface EntradaAprendizaje {
++  memoria: Memoria
++  acciones: Map<string, Accion>
++  ctx: Contexto
++  ahora: number
++  minRepeticiones: number
++  /** Para el panel: incluye las que se mostraron hace poco en vuelo. */
++  ignorarDescanso?: boolean
++}
++
++export function generarSugerencias({ memoria, acciones, ctx, ahora, minRepeticiones: min, ignorarDescanso = false }: EntradaAprendizaje): Sugerencia[] {
++  const estado = memoria.estado
++  const candidatas: Sugerencia[] = []
++  const hechasEnSesion = new Set(estado.sesion.firmas)
++  const recientes = estado.sesion.firmas.slice(-1)
++  const franjaActual = franjaDe(ahora)
++
++  const habitoValido = (h: Habito | undefined): h is Habito => {
++    if (!h) return false
++    const accion = acciones.get(h.accion)
++    if (!accion || !aplica(accion, ctx)) return false
++    // Si un parámetro tiene opciones (usuarios en línea, categorías...), el valor tiene que seguir existiendo.
++    return (accion.parametros ?? []).every((p) => {
++      const valor = h.parametros[p.nombre]
++      if (!valor || !p.opciones) return !p.requerido || !!valor || !!p.opciones
++      return p.opciones().includes(valor)
++    })
++  }
++
++  // 1) Secuencias: "después de X, solés hacer Y".
++  const ultimo = estado.ultimo
++  if (ultimo && ahora - ultimo.t <= VENTANA_SECUENCIA_MS) {
++    const siguientes = estado.transiciones[ultimo.firma] ?? {}
++    const total = Object.values(siguientes).reduce((a, b) => a + b, 0)
++    const previo = estado.habitos[ultimo.firma]
++    const accionPrevia = previo ? acciones.get(previo.accion) : undefined
++    for (const [firma, veces] of Object.entries(siguientes)) {
++      const h = estado.habitos[firma]
++      if (!habitoValido(h) || recientes.includes(firma) || veces < min) continue
++      const p = veces / total
++      if (p < 0.45) continue
++      const accion = acciones.get(h.accion)!
++      const previoTxt = accionPrevia && previo ? cita(tituloDe(accionPrevia, previo.parametros)) : 'eso'
++      candidatas.push({
++        clave: `siguiente:${ultimo.firma}>${firma}`,
++        tipo: 'siguiente',
++        accion: h.accion,
++        parametros: h.parametros,
++        mensaje: `Después de ${previoTxt} casi siempre seguís con ${cita(tituloDe(accion, h.parametros))}. ¿Te lo adelanto?`,
++        boton: tituloDe(accion, h.parametros),
++        confianza: Math.min(1, 0.55 + p * 0.3 + Math.min(veces, 10) * 0.015),
++      })
++    }
++  }
++
++  // 1b) Secuencias generales: "después de ver un producto, solés consultarlo".
++  if (ultimo?.accion && ahora - ultimo.t <= VENTANA_SECUENCIA_MS) {
++    const siguientes = estado.transicionesAccion[ultimo.accion] ?? {}
++    const total = Object.values(siguientes).reduce((a, b) => a + b, 0)
++    const accionPrevia = acciones.get(ultimo.accion)
++    for (const [id, veces] of Object.entries(siguientes)) {
++      const accion = acciones.get(id)
++      if (!accion || !accionPrevia || !aplica(accion, ctx) || veces < min) continue
++      if (accion.parametros?.some((p) => p.requerido)) continue
++      if (candidatas.some((c) => c.accion === id) || recientes.some((f) => f.split('?')[0] === id)) continue
++      const p = veces / total
++      if (p < 0.5) continue
++      candidatas.push({
++        clave: `secuencia:${ultimo.accion}>${id}`,
++        tipo: 'siguiente',
++        accion: id,
++        parametros: {},
++        mensaje: `Cada vez que hacés ${cita(minuscula(accionPrevia.descripcion ?? tituloDe(accionPrevia, {})))}, después seguís con ${cita(tituloDe(accion, {}))}. ¿Te lo adelanto?`,
++        boton: tituloDe(accion, {}),
++        confianza: Math.min(0.9, 0.5 + p * 0.3 + Math.min(veces, 10) * 0.01),
++      })
++    }
++  }
++
++  // 2) Entrada: lo primero que hace al llegar.
++  if (estado.sesion.firmas.length === 0) {
++    const entradas = Object.values(estado.habitos).filter((h) => h.entradas >= min && habitoValido(h))
++    entradas.sort((a, b) => b.entradas - a.entradas)
++    const h = entradas[0]
++    if (h) {
++      const accion = acciones.get(h.accion)!
++      candidatas.push({
++        clave: `entrada:${h.firma}`,
++        tipo: 'entrada',
++        accion: h.accion,
++        parametros: h.parametros,
++        mensaje: `Cada vez que llegás, lo primero que hacés es ${cita(tituloDe(accion, h.parametros))}. ¿Arrancamos por ahí?`,
++        boton: tituloDe(accion, h.parametros),
++        confianza: Math.min(0.95, 0.5 + (h.entradas / Math.max(h.total, 1)) * 0.4),
++      })
++    }
++  }
++
++  // 3) Hábitos por contexto: sección + franja horaria.
++  for (const h of Object.values(estado.habitos)) {
++    if (!habitoValido(h) || hechasEnSesion.has(h.firma)) continue
++    const peso = decaer(h.peso, h.ultima, ahora)
++    if (peso < min) continue
++    const enSeccion = (h.secciones[ctx.seccion] ?? 0) / h.total
++    const enFranja = h.franjas[franjaActual] / h.total
++    if (enSeccion < 0.5 || enFranja < 0.5) continue
++    const accion = acciones.get(h.accion)!
++    candidatas.push({
++      clave: `habito:${h.firma}:${franjaActual}`,
++      tipo: 'habito',
++      accion: h.accion,
++      parametros: h.parametros,
++      mensaje: `${NOMBRE_FRANJA[franjaActual].charAt(0).toUpperCase()}${NOMBRE_FRANJA[franjaActual].slice(1)} solés ${minuscula(tituloDe(accion, h.parametros))}. ¿Lo hago por vos?`,
++      boton: tituloDe(accion, h.parametros),
++      confianza: Math.min(0.9, 0.3 + Math.min(peso / (min * 3), 1) * 0.3 + enSeccion * enFranja * 0.3),
++    })
++  }
++
++  // 4) Atajos: algo que hace a mano seguido y podría pedirme.
++  const porAccion = new Map<string, { manual: number; asistente: number; ejemplo: Habito }>()
++  for (const h of Object.values(estado.habitos)) {
++    const acc = porAccion.get(h.accion) ?? { manual: 0, asistente: 0, ejemplo: h }
++    acc.manual += h.manual
++    acc.asistente += h.asistente + h.golondrina
++    if (h.total > acc.ejemplo.total) acc.ejemplo = h
++    porAccion.set(h.accion, acc)
++  }
++  for (const [id, uso] of porAccion) {
++    const accion = acciones.get(id)
++    if (!accion || !accion.frases?.length || !aplica(accion, ctx)) continue
++    if (uso.manual < min || uso.asistente > 0) continue
++    const ejemplo = ejemploFrase(accion, uso.ejemplo.parametros)
++    candidatas.push({
++      clave: `atajo:${id}`,
++      tipo: 'atajo',
++      accion: id,
++      parametros: uso.ejemplo.parametros,
++      mensaje: `Veo que hacés ${cita(minuscula(tituloDe(accion, uso.ejemplo.parametros)))} seguido. No hace falta buscarlo: escribime «${ejemplo}» y lo hago yo.`,
++      boton: 'Probalo ahora',
++      confianza: 0.45,
++    })
++  }
++
++  // 5) Descubrir: funciones útiles que todavía no usó, en la sección donde pasa tiempo.
++  const usadas = new Set(Object.values(estado.habitos).map((h) => h.accion))
++  const visitas = estado.sesion.secciones[ctx.seccion] ?? 0
++  const actividad = estado.sesion.firmas.length
++  if (visitas + actividad >= 2) {
++    for (const accion of acciones.values()) {
++      if (!accion.descubrible || usadas.has(accion.id) || !aplica(accion, ctx)) continue
++      if (accion.parametros?.some((p) => p.requerido && !p.opciones)) continue
++      const frase = accion.frases?.length ? ` Pedímelo con «${ejemploFrase(accion, {})}».` : ''
++      const como = accion.comoHacerlo ? ` ${accion.comoHacerlo}` : ''
++      candidatas.push({
++        clave: `descubrir:${accion.id}`,
++        tipo: 'descubrir',
++        accion: accion.id,
++        parametros: {},
++        mensaje: `¿Sabías que podés ${minuscula(accion.descripcion ?? tituloDe(accion, {}))}?${como}${frase}`,
++        boton: tituloDe(accion, {}) || 'Mostrame',
++        confianza: 0.3,
++      })
++    }
++  }
++
++  return candidatas
++    .filter((s) => {
++      const e = estado.sugerencias[s.clave]
++      if (!e) return true
++      if (e.silenciada || e.rechazos >= 3) return false
++      if (!ignorarDescanso && ahora - e.mostrada < DESCANSO_MS) return false
++      if ((s.tipo === 'atajo' || s.tipo === 'descubrir') && e.veces >= 2) return false
++      return true
++    })
++    .sort((a, b) => b.confianza - a.confianza)
++}
++
++export function ejemploFrase(accion: Accion, parametros: Parametros): string {
++  const frase = accion.frases?.[0] ?? accion.titulo
++  return frase.replace(/\{(\w+)\}/g, (_, nombre: string) => {
++    if (parametros[nombre]) return parametros[nombre]
++    const opciones = accion.parametros?.find((p) => p.nombre === nombre)?.opciones?.() ?? []
++    return opciones[0] ?? '…'
++  })
++}
++
++/** Resumen legible de lo aprendido (transparencia para el usuario). */
++export function resumenAprendido(memoria: Memoria, acciones: Map<string, Accion>, ahora: number, min: number): string {
++  const habitos = Object.values(memoria.estado.habitos)
++    .map((h) => ({ h, peso: decaer(h.peso, h.ultima, ahora) }))
++    .filter(({ h, peso }) => peso >= min - 0.5 && acciones.has(h.accion))
++    .sort((a, b) => b.peso - a.peso)
++    .slice(0, 5)
++  if (habitos.length === 0) {
++    return 'Todavía estoy aprendiendo. Cuando repitas algo unas cuantas veces, voy a empezar a adelantártelo.'
++  }
++  const lineas = habitos.map(({ h }) => {
++    const accion = acciones.get(h.accion)!
++    const franja = (Object.entries(h.franjas) as [Franja, number][]).sort((a, b) => b[1] - a[1])[0]
++    const cuando = franja && franja[1] / h.total >= 0.5 ? `, sobre todo ${NOMBRE_FRANJA[franja[0]]}` : ''
++    return `• ${tituloDe(accion, h.parametros)} (${h.total} veces${cuando})`
++  })
++  const secuencias: string[] = []
++  for (const [desde, hacia] of Object.entries(memoria.estado.transiciones)) {
++    for (const [firma, veces] of Object.entries(hacia)) {
++      if (veces < min) continue
++      const a = memoria.estado.habitos[desde]
++      const b = memoria.estado.habitos[firma]
++      const accA = a && acciones.get(a.accion)
++      const accB = b && acciones.get(b.accion)
++      if (a && b && accA && accB) secuencias.push(`• ${tituloDe(accA, a.parametros)} → ${tituloDe(accB, b.parametros)}`)
++    }
++  }
++  let texto = `Esto es lo que aprendí de vos:\n${lineas.join('\n')}`
++  if (secuencias.length) texto += `\n\nY estas costumbres en orden:\n${secuencias.slice(0, 4).join('\n')}`
++  return texto + '\n\nSi querés que lo olvide, escribime «olvidá todo».'
++}
++
++export { firmaDe }
+diff --git a/frontend/src/golondrina/index.ts b/frontend/src/golondrina/index.ts
+new file mode 100644
+index 0000000..e07087d
+--- /dev/null
++++ b/frontend/src/golondrina/index.ts
+@@ -0,0 +1,423 @@
++/**
++ * Golondrina — asistente + automatización que aprende por repetición y contexto.
++ *
++ * Uso mínimo:
++ *   const g = crearGolondrina({ app: 'mi-sistema', acciones: [...] })
++ *   g.contexto('inicio')                       // dónde está el usuario
++ *   g.registrar('buscar', { consulta: 'x' })   // algo que hizo a mano
++ *
++ * El usuario le habla al asistente ("buscá puertas de roble") y el asistente
++ * ejecuta la acción. Golondrina observa todo (lo manual y lo pedido), aprende
++ * los hábitos y los muestra en el momento justo, sin que el usuario tenga que
++ * aprender dónde está cada cosa.
++ */
++import { ejemploFrase, generarSugerencias, resumenAprendido, tituloDe } from './aprendizaje'
++import {
++  accionAplica,
++  esCancelar,
++  esOlvido,
++  esPedidoDeAyuda,
++  esPreguntaAprendizaje,
++  esSilencio,
++  interpretar,
++  type Interpretacion,
++} from './interprete'
++import { Memoria } from './memoria'
++import { buscarOpcion, normalizar } from './texto'
++import type { Accion, Contexto, OpcionesGolondrina, ParametroAccion, Parametros, Sugerencia, ValorContexto, Via } from './tipos'
++import { InterfazGolondrina, type Boton } from './ui'
++
++export type * from './tipos'
++
++/** Pausa mínima entre dos sugerencias "en vuelo". */
++const PAUSA_ENTRE_VUELOS_MS = 90 * 1000
++
++interface Pendiente {
++  accion: Accion
++  parametros: Parametros
++  faltante: ParametroAccion
++  frase: string
++}
++
++export class Golondrina {
++  readonly memoria: Memoria
++  private acciones = new Map<string, Accion>()
++  private ctx: Contexto = { seccion: 'inicio' }
++  private readonly op: Required<Pick<OpcionesGolondrina, 'app' | 'nombre' | 'minRepeticiones' | 'sugerir'>> & OpcionesGolondrina
++  private ui: InterfazGolondrina | null = null
++  private pendiente: Pendiente | null = null
++  private ultimoVuelo = 0
++  private vueloActual: Sugerencia | null = null
++  private temporizador: ReturnType<typeof setTimeout> | null = null
++  private intervalo: ReturnType<typeof setInterval> | null = null
++  private saludado = false
++  private ejecutando = 0
++  private temaActual: 'auto' | 'claro' | 'oscuro' = 'auto'
++  private readonly alClic = (e: Event) => this.capturarClic(e)
++
++  constructor(opciones: OpcionesGolondrina) {
++    this.op = { nombre: 'Golondrina', minRepeticiones: 3, sugerir: true, ...opciones }
++    this.memoria = new Memoria(opciones.app, opciones.almacenamiento, this.ahora)
++    this.definirAcciones(opciones.acciones)
++  }
++
++  private readonly ahora = () => (this.op?.ahora ?? Date.now)()
++
++  /** Monta la interfaz. Se llama solo desde crearGolondrina en el navegador. */
++  montar() {
++    if (this.ui || typeof document === 'undefined') return this
++    this.ui = new InterfazGolondrina({
++      nombre: this.op.nombre,
++      colorPrimario: this.op.colorPrimario ?? '#1f4e8c',
++      colorTexto: this.op.colorTexto ?? '#ffffff',
++      posicion: this.op.posicion ?? 'derecha',
++      abajo: this.op.abajo ?? 20,
++      contenedor: this.op.contenedor ?? document.body,
++      alEnviar: (texto) => void this.escuchar(texto),
++      alAbrir: () => this.alAbrirPanel(),
++    })
++    this.ui.definirTema(this.temaActual)
++    if (this.op.capturarClics !== false) document.addEventListener('click', this.alClic, true)
++    this.intervalo = setInterval(() => this.evaluar(), 60 * 1000)
++    this.programarEvaluacion(2500)
++    return this
++  }
++
++  destruir() {
++    if (this.temporizador) clearTimeout(this.temporizador)
++    if (this.intervalo) clearInterval(this.intervalo)
++    document.removeEventListener('click', this.alClic, true)
++    this.ui?.destruir()
++    this.ui = null
++  }
++
++  // ───────────────────────── API para el sistema anfitrión ─────────────────────────
++
++  /** Reemplaza el catálogo de acciones (útil en React, donde cambian los closures). */
++  definirAcciones(acciones: Accion[]) {
++    this.acciones = new Map(acciones.map((a) => [a.id, a]))
++  }
++
++  /** Informa dónde está el usuario. */
++  contexto(seccion: string, extra?: Record<string, ValorContexto>) {
++    const cambio = seccion !== this.ctx.seccion
++    this.ctx = { seccion, extra }
++    if (cambio) {
++      this.memoria.visitarSeccion(seccion)
++      this.memoria.guardar()
++      this.programarEvaluacion(1500)
++    }
++  }
++
++  get contextoActual(): Contexto {
++    return this.ctx
++  }
++
++  /** Separa la memoria por usuario (llamar al iniciar/cerrar sesión). */
++  usuario(nombre: string | null) {
++    this.memoria.cambiarUsuario(this.op.app, nombre)
++    this.saludado = false
++  }
++
++  /** Registra una acción que el usuario hizo por su cuenta (clic, formulario...). */
++  registrar(accionId: string, parametros: Parametros = {}, via: Via = 'manual') {
++    // Lo que la app registre mientras el asistente ejecuta ya lo cuenta el asistente.
++    if (via === 'manual' && this.ejecutando > 0) return
++    const accion = this.acciones.get(accionId)
++    const memorizables = this.memorizables(accion, parametros)
++    const firmaNueva = `${accionId}|${JSON.stringify(memorizables)}`
++    const ultimo = this.memoria.estado.recientes.at(-1)
++    // Evita contar dos veces lo mismo (p. ej. el asistente ejecuta y la app también registra).
++    if (ultimo && `${ultimo.accion}|${JSON.stringify(ultimo.parametros)}` === firmaNueva && this.ahora() - ultimo.t < 400) return
++    this.memoria.registrar(accionId, memorizables, this.ctx.seccion, via)
++    this.programarEvaluacion(1800)
++  }
++
++  /** Sincroniza la apariencia con el tema del sistema anfitrión. */
++  tema(tema: 'auto' | 'claro' | 'oscuro') {
++    this.temaActual = tema
++    this.ui?.definirTema(tema)
++  }
++
++  abrir(texto?: string) {
++    this.ui?.abrir(texto)
++  }
++
++  /** Procesa un mensaje del usuario como si lo hubiera escrito en el panel. */
++  async escuchar(texto: string) {
++    const ui = this.ui
++    ui?.agregarMensaje('usuario', texto)
++    const respuesta = await this.responder(texto)
++    if (respuesta) ui?.agregarMensaje('golondrina', respuesta.texto, respuesta.botones)
++    this.actualizarChips()
++    return respuesta
++  }
++
++  /** Sugerencias actuales (para mostrarlas también dentro de la propia app). */
++  sugerencias(paraPanel = false): Sugerencia[] {
++    return generarSugerencias({
++      ignorarDescanso: paraPanel,
++      memoria: this.memoria,
++      acciones: this.acciones,
++      ctx: this.ctx,
++      ahora: this.ahora(),
++      minRepeticiones: this.op.minRepeticiones,
++    })
++  }
++
++  /** Ejecuta una acción del catálogo y la registra. */
++  async ejecutar(accionId: string, parametros: Parametros = {}, via: Via = 'asistente'): Promise<string> {
++    const accion = this.acciones.get(accionId)
++    if (!accion) return 'No encontré esa acción.'
++    if (!accionAplica(accion, this.ctx)) return `Ahora mismo no puedo «${tituloDe(accion, parametros)}» desde acá.`
++    this.ejecutando++
++    try {
++      const resultado = await accion.ejecutar(parametros, this.ctx)
++      this.ejecutando--
++      this.registrar(accionId, parametros, via)
++      return resultado || `Listo: ${tituloDe(accion, parametros)}.`
++    } catch (error) {
++      this.ejecutando--
++      return `No pude completarlo: ${error instanceof Error ? error.message : 'error inesperado'}.`
++    }
++  }
++
++  // ───────────────────────── Conversación ─────────────────────────
++
++  async responder(texto: string): Promise<{ texto: string; botones?: Boton[] } | null> {
++    const pendiente = this.pendiente
++    if (pendiente) {
++      this.pendiente = null
++      if (esCancelar(texto)) return { texto: 'Listo, lo dejamos.' }
++      const opciones = pendiente.faltante.opciones?.()
++      const valor = opciones ? buscarOpcion(texto, opciones) : texto
++      // Si la respuesta no es una opción válida, se toma como un pedido nuevo.
++      if (valor) return this.completar(pendiente.accion, { ...pendiente.parametros, [pendiente.faltante.nombre]: valor }, pendiente.frase)
++    }
++
++    if (esPedidoDeAyuda(texto)) return this.ayuda()
++    if (esPreguntaAprendizaje(texto)) {
++      return { texto: resumenAprendido(this.memoria, this.acciones, this.ahora(), this.op.minRepeticiones) }
++    }
++    if (esOlvido(texto)) {
++      return {
++        texto: '¿Seguro? Voy a olvidar todos tus hábitos y frases aprendidas.',
++        botones: [
++          { texto: 'Sí, olvidá todo', principal: true, alHacer: () => { this.memoria.olvidarTodo(); this.ui?.agregarMensaje('golondrina', 'Hecho. Empiezo de cero.') } },
++          { texto: 'No', alHacer: () => this.ui?.agregarMensaje('golondrina', 'Perfecto, no borro nada.') },
++        ],
++      }
++    }
++    const silencio = esSilencio(texto)
++    if (silencio) {
++      this.memoria.estado.silencio = silencio === 'silenciar'
++      this.memoria.guardar()
++      return {
++        texto: silencio === 'silenciar'
++          ? 'Entendido, no voy a interrumpirte con sugerencias. Sigo aprendiendo; pedime «volvé a sugerir» cuando quieras.'
++          : '¡Vuelvo a volar! Te aviso cuando vea algo útil.',
++      }
++    }
++
++    const acciones = [...this.acciones.values()]
++    const candidatos = interpretar(texto, acciones, this.ctx, this.memoria.estado.frases)
++    const mejor = candidatos[0]
++    const frase = normalizar(texto)
++
++    if (mejor && mejor.puntaje >= 0.6 && (!candidatos[1] || mejor.puntaje - candidatos[1].puntaje >= 0.08 || mejor.puntaje > 1)) {
++      return this.completar(mejor.accion, mejor.parametros, frase, mejor)
++    }
++
++    if (this.op.interpretar) {
++      try {
++        const externo = await this.op.interpretar(texto, acciones.filter((a) => accionAplica(a, this.ctx)), this.ctx)
++        const accion = externo && this.acciones.get(externo.accion)
++        if (accion) return this.completar(accion, externo.parametros ?? {}, frase)
++      } catch {
++        /* si el intérprete externo falla, seguimos con el local */
++      }
++    }
++
++    // ¿Lo pidió bien pero ahora no se puede? Explicar qué falta en vez de adivinar.
++    const noDisponible = interpretar(texto, acciones, this.ctx, {}, false)[0]
++    if (noDisponible && noDisponible.puntaje >= 0.6 && noDisponible.puntaje > (mejor?.puntaje ?? 0)) {
++      const titulo = tituloDe(noDisponible.accion, noDisponible.parametros)
++      return { texto: `${titulo}: eso lo sé hacer, pero no desde acá. ${noDisponible.accion.requisito ?? ''}`.trim() }
++    }
++
++    const dudosos = candidatos.filter((c) => c.puntaje >= 0.3).slice(0, 3)
++    if (dudosos.length) {
++      return {
++        texto: dudosos.length === 1 ? '¿Te referís a esto?' : 'No estoy segura de haber entendido. ¿Es alguna de estas?',
++        botones: [
++          ...dudosos.map((c) => ({
++            texto: c.faltantes.length && c.accion.descripcion
++              ? c.accion.descripcion.charAt(0).toUpperCase() + c.accion.descripcion.slice(1)
++              : tituloDe(c.accion, c.parametros),
++            principal: true,
++            alHacer: () => {
++              // Aprende la frase: la próxima vez la entiende directo.
++              this.memoria.aprenderFrase(frase, c.accion.id, this.memorizables(c.accion, c.parametros))
++              void this.completar(c.accion, c.parametros, frase).then((r) => r && this.ui?.agregarMensaje('golondrina', r.texto, r.botones))
++            },
++          })),
++          { texto: 'Ninguna', alHacer: () => this.ui?.agregarMensaje('golondrina', 'Gracias por avisar. Probá decirlo de otra forma o escribí «ayuda» para ver lo que sé hacer.') },
++        ],
++      }
++    }
++    return {
++      texto: 'Todavía no sé hacer eso. Escribí «ayuda» y te muestro lo que puedo hacer en esta pantalla.',
++      botones: this.botonesDeSugerencias(),
++    }
++  }
++
++  private async completar(accion: Accion, parametros: Parametros, frase: string, interpretacion?: Interpretacion) {
++    const faltante = (interpretacion?.faltantes ?? accion.parametros?.filter((p) => p.requerido && !parametros[p.nombre]) ?? [])[0]
++    if (faltante && !parametros[faltante.nombre]) {
++      this.pendiente = { accion, parametros, faltante, frase }
++      const opciones = faltante.opciones?.().slice(0, 6) ?? []
++      return {
++        texto: faltante.pregunta ?? `¿Qué ${faltante.nombre}?`,
++        botones: opciones.map((o) => ({
++          texto: o,
++          alHacer: () => void this.escuchar(o),
++        })),
++      }
++    }
++    const texto = await this.ejecutar(accion.id, parametros, 'asistente')
++    return { texto }
++  }
++
++  private ayuda() {
++    const disponibles = [...this.acciones.values()].filter((a) => accionAplica(a, this.ctx) && a.frases?.length)
++    const lista = disponibles.slice(0, 8).map((a) => `• «${ejemploFrase(a, {})}» — ${a.descripcion ?? a.titulo}`)
++    return {
++      texto: `Soy ${this.op.nombre}. Pedime las cosas con tus palabras y las hago por vos. Mientras tanto aprendo tus costumbres y te las adelanto.\n\nAquí puedo:\n${lista.join('\n')}\n\nTambién: «¿qué aprendiste?», «no me sugieras», «olvidá todo».`,
++      botones: disponibles.slice(0, 3).map((a) => ({ texto: ejemploFrase(a, {}), alHacer: () => this.ui?.abrir(ejemploFrase(a, {})) })),
++    }
++  }
++
++  // ───────────────────────── Automatización ─────────────────────────
++
++  private alAbrirPanel() {
++    if (!this.saludado) {
++      this.saludado = true
++      const saludo = this.op.saludo ?? `¡Hola! Soy ${this.op.nombre}. Decime qué necesitás y lo hago. Con el uso aprendo tus costumbres para adelantarme.`
++      this.ui?.agregarMensaje('golondrina', saludo)
++    }
++    this.actualizarChips()
++  }
++
++  private botonesDeSugerencias(): Boton[] {
++    return this.sugerencias(true)
++      .slice(0, 3)
++      .map((s) => ({ texto: s.boton, alHacer: () => void this.aceptar(s) }))
++  }
++
++  private actualizarChips() {
++    const chips = this.sugerencias(true)
++      .filter((s) => s.tipo !== 'atajo')
++      .slice(0, 4)
++      .map((s) => ({ texto: s.boton, alHacer: () => void this.aceptar(s) }))
++    this.ui?.mostrarChips(chips)
++  }
++
++  private programarEvaluacion(ms: number) {
++    if (!this.ui) return
++    if (this.temporizador) clearTimeout(this.temporizador)
++    this.temporizador = setTimeout(() => this.evaluar(), ms)
++  }
++
++  /** Decide si Golondrina "sale volando" con una sugerencia. */
++  evaluar() {
++    const ui = this.ui
++    if (!ui) return
++    if (ui.abierto) {
++      this.actualizarChips()
++      return
++    }
++    if (!this.op.sugerir || this.memoria.estado.silencio) return
++    if (typeof document !== 'undefined' && document.hidden) return
++    const s = this.sugerencias().find((x) => x.confianza >= 0.3)
++    if (!s) return
++    // Una sugerencia mucho más pertinente puede reemplazar a la que está en pantalla.
++    const reemplaza = ui.vueloVisible && !!this.vueloActual && s.clave !== this.vueloActual.clave && s.confianza >= this.vueloActual.confianza + 0.2
++    if (ui.vueloVisible && !reemplaza) return
++    if (!reemplaza && this.ahora() - this.ultimoVuelo < PAUSA_ENTRE_VUELOS_MS) return
++    const estado = this.memoria.estadoSugerencia(s.clave)
++    const mostrada = ui.mostrarVuelo(
++      s.mensaje,
++      [
++        { texto: s.boton, principal: true, alHacer: () => void this.aceptar(s) },
++        { texto: 'Ahora no', alHacer: () => this.rechazar(s) },
++      ],
++      () => this.rechazar(s),
++      () => {
++        this.memoria.estadoSugerencia(s.clave).silenciada = true
++        this.memoria.guardar()
++      },
++    )
++    if (mostrada) {
++      this.vueloActual = s
++      estado.mostrada = this.ahora()
++      estado.veces += 1
++      this.ultimoVuelo = this.ahora()
++      this.memoria.guardar()
++    }
++  }
++
++  async aceptar(s: Sugerencia) {
++    const estado = this.memoria.estadoSugerencia(s.clave)
++    estado.aceptadas += 1
++    estado.rechazos = Math.max(0, estado.rechazos - 1)
++    this.memoria.guardar()
++    if (s.tipo === 'atajo') {
++      const accion = this.acciones.get(s.accion)
++      this.ui?.abrir(accion ? ejemploFrase(accion, s.parametros) : '')
++      return
++    }
++    const texto = await this.ejecutar(s.accion, s.parametros, 'golondrina')
++    if (this.ui?.abierto) this.ui.agregarMensaje('golondrina', texto)
++  }
++
++  private rechazar(s: Sugerencia) {
++    this.memoria.estadoSugerencia(s.clave).rechazos += 1
++    this.memoria.guardar()
++  }
++
++  // ───────────────────────── Utilidades ─────────────────────────
++
++  private memorizables(accion: Accion | undefined, parametros: Parametros): Parametros {
++    const salida: Parametros = {}
++    for (const [k, v] of Object.entries(parametros)) {
++      const def = accion?.parametros?.find((p) => p.nombre === k)
++      if (def?.memorizable === false) continue
++      if (def?.libre && v.length > 40) continue
++      salida[k] = def?.libre ? v.trim().replace(/\s+/g, ' ') : v
++    }
++    return salida
++  }
++
++  /** Elementos con data-golondrina="accion" (y data-golondrina-xxx="valor") se registran solos. */
++  private capturarClic(e: Event) {
++    const destino = (e.target as Element | null)?.closest?.('[data-golondrina]') as HTMLElement | null
++    if (!destino) return
++    const accionId = destino.dataset['golondrina']
++    if (!accionId) return
++    const parametros: Parametros = {}
++    for (const [clave, valor] of Object.entries(destino.dataset)) {
++      if (clave.startsWith('golondrina') && clave !== 'golondrina' && valor !== undefined) {
++        const nombre = clave.slice('golondrina'.length)
++        parametros[nombre.charAt(0).toLowerCase() + nombre.slice(1)] = valor
++      }
++    }
++    this.registrar(accionId, parametros, 'manual')
++  }
++}
++
++export function crearGolondrina(opciones: OpcionesGolondrina): Golondrina {
++  return new Golondrina(opciones).montar()
++}
++
++export { tituloDe, ejemploFrase } from './aprendizaje'
++export { normalizar } from './texto'
+diff --git a/frontend/src/golondrina/interprete.ts b/frontend/src/golondrina/interprete.ts
+new file mode 100644
+index 0000000..4a9d415
+--- /dev/null
++++ b/frontend/src/golondrina/interprete.ts
+@@ -0,0 +1,180 @@
++/**
++ * Intérprete local del asistente: entiende frases en español y las convierte
++ * en una acción del sistema con sus parámetros. No usa servicios externos.
++ */
++import type { Accion, Contexto, ParametroAccion, Parametros } from './tipos'
++import { buscarOpcion, cobertura, normalizar, parecidas, raices, raiz } from './texto'
++import type { FraseAprendida } from './memoria'
++
++export interface Interpretacion {
++  accion: Accion
++  parametros: Parametros
++  faltantes: ParametroAccion[]
++  puntaje: number
++}
++
++const CONECTORES = new Set(['que', 'a', 'por', 'de', 'el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas', 'en', 'con', 'sobre', 'al', 'algo', 'alguna', 'alguno', 'algun', 'algunas', 'algunos', 'mis', 'tus'])
++
++export function accionAplica(accion: Accion, ctx: Contexto): boolean {
++  if (accion.secciones?.length && !accion.secciones.includes(ctx.seccion)) return false
++  try {
++    return accion.disponible ? accion.disponible(ctx) : true
++  } catch {
++    return false
++  }
++}
++
++/** Texto entre comillas, si el usuario lo marcó explícitamente. */
++function entreComillas(texto: string): string | null {
++  const m = texto.match(/["“«']([^"”»']+)["”»']/)
++  return m ? m[1].trim() : null
++}
++
++/**
++ * Extrae el texto libre que sigue a las palabras "disparadoras" de la frase.
++ * "decí hola a todos" con la frase "enviar {texto}" → "hola a todos".
++ */
++function extraerLibre(texto: string, frase: string, nombre: string, consumidas: string[]): string | null {
++  const comillas = entreComillas(texto)
++  if (comillas) return comillas
++  const indice = frase.indexOf(`{${nombre}}`)
++  if (indice < 0) return null
++  const disparadoras = raices(frase.slice(0, indice), true)
++  const originales = texto.trim().split(/\s+/)
++  const normales = originales.map((p) => normalizar(p))
++  let corte = -1
++  normales.forEach((n, i) => {
++    if (n && disparadoras.some((d) => parecidas(raiz(n), d))) corte = i
++  })
++  if (corte < 0 && disparadoras.length > 0) return null
++  let resto = originales.slice(corte + 1)
++  // Quita conectores iniciales ("que", "a", "por"...) y valores ya usados por otros parámetros.
++  while (resto.length && (CONECTORES.has(normalizar(resto[0])) || resto[0] === ':')) resto = resto.slice(1)
++  let valor = resto.join(' ').replace(/^[:,\s]+/, '').trim()
++  for (const usada of consumidas) {
++    const n = normalizar(valor)
++    if (n.startsWith(normalizar(usada))) valor = valor.split(/\s+/).slice(usada.split(/\s+/).length).join(' ')
++  }
++  while (valor && CONECTORES.has(normalizar(valor.split(/\s+/)[0]))) valor = valor.split(/\s+/).slice(1).join(' ')
++  return valor.trim() || null
++}
++
++function puntuarFrase(consulta: string[], frase: string): number {
++  const patron = raices(frase)
++  if (patron.length === 0) return 0
++  const recall = cobertura(consulta, patron)
++  const precision = consulta.length ? cobertura(patron, consulta) : 0
++  return recall * 0.75 + precision * 0.25
++}
++
++export function interpretar(
++  texto: string,
++  acciones: Accion[],
++  ctx: Contexto,
++  aprendidas: Record<string, FraseAprendida> = {},
++  soloDisponibles = true,
++): Interpretacion[] {
++  const norm = normalizar(texto)
++  const consulta = raices(texto)
++  const resultados: Interpretacion[] = []
++
++  for (const accion of acciones) {
++    if (accionAplica(accion, ctx) !== soloDisponibles) continue
++    const frases = accion.frases?.length ? accion.frases : [accion.titulo]
++    let mejorFrase = frases[0]
++    let base = -1
++    for (const frase of frases) {
++      const p = puntuarFrase(consulta, frase)
++      if (p > base) {
++        base = p
++        mejorFrase = frase
++      }
++    }
++
++    const parametros: Parametros = {}
++    const faltantes: ParametroAccion[] = []
++    let bonus = 0
++    const consumidas: string[] = []
++    for (const param of accion.parametros ?? []) {
++      if (param.opciones) {
++        const valor = buscarOpcion(texto, param.opciones())
++        if (valor) {
++          parametros[param.nombre] = valor
++          consumidas.push(valor)
++          bonus += 0.2
++        }
++      }
++    }
++    for (const param of accion.parametros ?? []) {
++      if (param.libre && !parametros[param.nombre]) {
++        const frase = frases.find((f) => f.includes(`{${param.nombre}}`)) ?? mejorFrase
++        const valor = extraerLibre(texto, frase, param.nombre, consumidas)
++        if (valor) {
++          parametros[param.nombre] = valor
++          bonus += 0.05
++          // Si todas las palabras disparadoras están, el resto es el texto libre: no penaliza.
++          const disparadoras = raices(frase.slice(0, frase.indexOf(`{${param.nombre}}`)))
++          if (disparadoras.length && cobertura(consulta, disparadoras) === 1) base = Math.max(base, 0.85)
++        }
++      }
++      if (param.requerido && !parametros[param.nombre]) faltantes.push(param)
++    }
++
++    // Una opción reconocida por sí sola ("puertas") ya es una buena pista.
++    const soloOpcion = bonus >= 0.2 && base < 0.4 ? 0.45 : 0
++    // Si falta un dato obligatorio, otra acción completa debería ganarle.
++    const penalizacion = faltantes.length ? 0.7 : 1
++    const puntaje = Math.min(1, (Math.max(base, soloOpcion) + bonus) * penalizacion)
++    if (puntaje > 0.2) resultados.push({ accion, parametros, faltantes, puntaje })
++  }
++
++  // Frases que el usuario ya me enseñó tienen prioridad.
++  const aprendida = aprendidas[norm]
++  if (aprendida) {
++    const accion = acciones.find((a) => a.id === aprendida.accion && accionAplica(a, ctx))
++    if (accion) {
++      resultados.push({ accion, parametros: { ...aprendida.parametros }, faltantes: [], puntaje: 1.1 })
++    }
++  } else {
++    for (const [frase, dato] of Object.entries(aprendidas)) {
++      const p = puntuarFrase(consulta, frase)
++      if (p < 0.85) continue
++      const accion = acciones.find((a) => a.id === dato.accion && accionAplica(a, ctx))
++      if (accion) resultados.push({ accion, parametros: { ...dato.parametros }, faltantes: [], puntaje: 0.8 + Math.min(dato.veces, 5) * 0.02 })
++    }
++  }
++
++  // Una sola entrada por acción (la de mayor puntaje).
++  const porAccion = new Map<string, Interpretacion>()
++  for (const r of resultados) {
++    const previo = porAccion.get(r.accion.id)
++    if (!previo || r.puntaje > previo.puntaje) porAccion.set(r.accion.id, r)
++  }
++  return [...porAccion.values()].sort((a, b) => b.puntaje - a.puntaje)
++}
++
++export function esPedidoDeAyuda(texto: string): boolean {
++  const n = normalizar(texto)
++  return /^(ayuda|help|\?|menu)$/.test(n) || /que (podes|puedes|sabes) hacer|como (funciona|te uso|se usa)|en que (me )?(podes|puedes) ayudar/.test(n)
++}
++
++export function esPreguntaAprendizaje(texto: string): boolean {
++  const n = normalizar(texto)
++  return /que (aprendiste|sabes de mi|sabes sobre mi|recordas|recuerdas)|mis (habitos|costumbres)/.test(n)
++}
++
++export function esOlvido(texto: string): boolean {
++  return /^(olvida|olvidate|borra) (todo|lo que sabes|mis datos|lo aprendido)/.test(normalizar(texto))
++}
++
++export function esSilencio(texto: string): 'silenciar' | 'activar' | null {
++  const n = normalizar(texto)
++  if (/(no me sugieras|deja de sugerir|silencio|no me molestes|calla|desactiva (las )?sugerencias)/.test(n)) return 'silenciar'
++  if (/(volve a sugerir|activa (las )?sugerencias|sugerime|podes sugerir)/.test(n)) return 'activar'
++  return null
++}
++
++export function esCancelar(texto: string): boolean {
++  return /^(cancelar|cancela|nada|dejalo|deja|olvidalo|no)$/.test(normalizar(texto))
++}
++
+diff --git a/frontend/src/golondrina/memoria.ts b/frontend/src/golondrina/memoria.ts
+new file mode 100644
+index 0000000..7b29deb
+--- /dev/null
++++ b/frontend/src/golondrina/memoria.ts
+@@ -0,0 +1,246 @@
++/**
++ * Memoria de Golondrina: guarda lo que el usuario hace, en qué contexto y en
++ * qué orden. Todo vive en el navegador del usuario (localStorage).
++ */
++import type { Evento, Franja, Parametros, Via } from './tipos'
++
++const VERSION = 1
++/** Vida media de un hábito: lo que no se repite se va olvidando. */
++export const VIDA_MEDIA_MS = 14 * 24 * 60 * 60 * 1000
++/** Tiempo sin actividad que inicia una nueva sesión. */
++export const PAUSA_SESION_MS = 30 * 60 * 1000
++/** Ventana para considerar que una acción "sigue" a otra. */
++export const VENTANA_SECUENCIA_MS = 10 * 60 * 1000
++
++export interface Habito {
++  firma: string
++  accion: string
++  parametros: Parametros
++  /** Repeticiones con olvido gradual. */
++  peso: number
++  total: number
++  ultima: number
++  franjas: Record<Franja, number>
++  secciones: Record<string, number>
++  manual: number
++  asistente: number
++  golondrina: number
++  /** Veces que fue lo primero que hizo el usuario en una sesión. */
++  entradas: number
++}
++
++export interface EstadoSugerencia {
++  mostrada: number
++  veces: number
++  rechazos: number
++  aceptadas: number
++  silenciada: boolean
++}
++
++export interface FraseAprendida {
++  accion: string
++  parametros: Parametros
++  veces: number
++}
++
++export interface Estado {
++  v: number
++  habitos: Record<string, Habito>
++  transiciones: Record<string, Record<string, number>>
++  /** Igual que transiciones pero por tipo de acción (sin parámetros). */
++  transicionesAccion: Record<string, Record<string, number>>
++  frases: Record<string, FraseAprendida>
++  sugerencias: Record<string, EstadoSugerencia>
++  ultimo: { firma: string; accion?: string; t: number } | null
++  sesion: { inicio: number; firmas: string[]; secciones: Record<string, number> }
++  silencio: boolean
++  recientes: Evento[]
++}
++
++function estadoVacio(t: number): Estado {
++  return {
++    v: VERSION,
++    habitos: {},
++    transiciones: {},
++    transicionesAccion: {},
++    frases: {},
++    sugerencias: {},
++    ultimo: null,
++    sesion: { inicio: t, firmas: [], secciones: {} },
++    silencio: false,
++    recientes: [],
++  }
++}
++
++export function franjaDe(t: number): Franja {
++  const h = new Date(t).getHours()
++  if (h < 6) return 'madrugada'
++  if (h < 13) return 'manana'
++  if (h < 20) return 'tarde'
++  return 'noche'
++}
++
++export function decaer(peso: number, desde: number, hasta: number): number {
++  if (hasta <= desde) return peso
++  return peso * Math.pow(0.5, (hasta - desde) / VIDA_MEDIA_MS)
++}
++
++export function firmaDe(accion: string, parametros: Parametros): string {
++  const claves = Object.keys(parametros).sort()
++  if (claves.length === 0) return accion
++  return `${accion}?${claves.map((k) => `${k}=${parametros[k]}`).join('&')}`
++}
++
++type Almacen = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
++
++function almacenPorDefecto(): Almacen | null {
++  try {
++    return typeof localStorage !== 'undefined' ? localStorage : null
++  } catch {
++    return null
++  }
++}
++
++export class Memoria {
++  estado: Estado
++  private clave: string
++  private readonly almacen: Almacen | null
++  private readonly ahora: () => number
++
++  constructor(app: string, almacen?: Almacen, ahora: () => number = Date.now) {
++    this.almacen = almacen ?? almacenPorDefecto()
++    this.ahora = ahora
++    this.clave = `golondrina:${app}`
++    this.estado = this.cargar()
++  }
++
++  /** Cambia el espacio de memoria (por ejemplo, al iniciar sesión otro usuario). */
++  cambiarUsuario(app: string, usuario: string | null) {
++    this.clave = usuario ? `golondrina:${app}:${usuario.toLowerCase()}` : `golondrina:${app}`
++    this.estado = this.cargar()
++  }
++
++  private cargar(): Estado {
++    const t = this.ahora()
++    try {
++      const crudo = this.almacen?.getItem(this.clave)
++      if (crudo) {
++        const datos = JSON.parse(crudo) as Estado
++        if (datos.v === VERSION) return { ...estadoVacio(t), ...datos }
++      }
++    } catch {
++      /* memoria corrupta: se empieza de cero */
++    }
++    return estadoVacio(t)
++  }
++
++  guardar() {
++    try {
++      this.almacen?.setItem(this.clave, JSON.stringify(this.estado))
++    } catch {
++      /* almacenamiento lleno o bloqueado: Golondrina sigue funcionando en memoria */
++    }
++  }
++
++  olvidarTodo() {
++    this.estado = estadoVacio(this.ahora())
++    try {
++      this.almacen?.removeItem(this.clave)
++    } catch {
++      /* nada */
++    }
++  }
++
++  /** Marca el paso del tiempo: abre una sesión nueva si hubo una pausa larga. */
++  tocarSesion(): boolean {
++    const t = this.ahora()
++    const ultimo = this.estado.ultimo?.t ?? 0
++    if (t - ultimo > PAUSA_SESION_MS && t - this.estado.sesion.inicio > PAUSA_SESION_MS) {
++      this.estado.sesion = { inicio: t, firmas: [], secciones: {} }
++      return true
++    }
++    return false
++  }
++
++  visitarSeccion(seccion: string) {
++    this.tocarSesion()
++    const s = this.estado.sesion.secciones
++    s[seccion] = (s[seccion] ?? 0) + 1
++  }
++
++  registrar(accion: string, parametros: Parametros, seccion: string, via: Via): Evento {
++    this.tocarSesion()
++    const t = this.ahora()
++    const firma = firmaDe(accion, parametros)
++    const franja = franjaDe(t)
++    const evento: Evento = { accion, firma, parametros, seccion, franja, via, t }
++
++    const previo = this.estado.habitos[firma]
++    const habito: Habito = previo ?? {
++      firma,
++      accion,
++      parametros,
++      peso: 0,
++      total: 0,
++      ultima: t,
++      franjas: { madrugada: 0, manana: 0, tarde: 0, noche: 0 },
++      secciones: {},
++      manual: 0,
++      asistente: 0,
++      golondrina: 0,
++      entradas: 0,
++    }
++    habito.peso = decaer(habito.peso, habito.ultima, t) + 1
++    habito.total += 1
++    habito.ultima = t
++    habito.franjas[franja] += 1
++    habito.secciones[seccion] = (habito.secciones[seccion] ?? 0) + 1
++    habito[via] += 1
++    if (this.estado.sesion.firmas.length === 0) habito.entradas += 1
++    this.estado.habitos[firma] = habito
++
++    // Secuencias: qué suele venir después de qué.
++    const ultimo = this.estado.ultimo
++    if (ultimo && ultimo.firma !== firma && t - ultimo.t <= VENTANA_SECUENCIA_MS) {
++      const desde = (this.estado.transiciones[ultimo.firma] ??= {})
++      desde[firma] = (desde[firma] ?? 0) + 1
++    }
++    if (ultimo?.accion && ultimo.accion !== accion && t - ultimo.t <= VENTANA_SECUENCIA_MS) {
++      const desde = (this.estado.transicionesAccion[ultimo.accion] ??= {})
++      desde[accion] = (desde[accion] ?? 0) + 1
++    }
++    this.estado.ultimo = { firma, accion, t }
++    this.estado.sesion.firmas.push(firma)
++    this.estado.recientes.push(evento)
++    if (this.estado.recientes.length > 60) this.estado.recientes.splice(0, this.estado.recientes.length - 60)
++
++    this.podar()
++    this.guardar()
++    return evento
++  }
++
++  aprenderFrase(frase: string, accion: string, parametros: Parametros) {
++    if (!frase) return
++    const previa = this.estado.frases[frase]
++    this.estado.frases[frase] = { accion, parametros, veces: (previa?.accion === accion ? previa.veces : 0) + 1 }
++    this.guardar()
++  }
++
++  estadoSugerencia(clave: string): EstadoSugerencia {
++    return (this.estado.sugerencias[clave] ??= { mostrada: 0, veces: 0, rechazos: 0, aceptadas: 0, silenciada: false })
++  }
++
++  /** Mantiene la memoria acotada: olvida hábitos muy débiles. */
++  private podar() {
++    const t = this.ahora()
++    const habitos = Object.values(this.estado.habitos)
++    if (habitos.length <= 300) return
++    habitos
++      .sort((a, b) => decaer(a.peso, a.ultima, t) - decaer(b.peso, b.ultima, t))
++      .slice(0, habitos.length - 300)
++      .forEach((h) => {
++        delete this.estado.habitos[h.firma]
++        delete this.estado.transiciones[h.firma]
++      })
++  }
++}
+diff --git a/frontend/src/golondrina/texto.ts b/frontend/src/golondrina/texto.ts
+new file mode 100644
+index 0000000..39d8e18
+--- /dev/null
++++ b/frontend/src/golondrina/texto.ts
+@@ -0,0 +1,125 @@
++/** Utilidades de lenguaje (español) sin dependencias. */
++
++const STOPWORDS = new Set([
++  'a', 'al', 'algo', 'como', 'con', 'de', 'del', 'el', 'en', 'es', 'esa', 'ese', 'eso', 'esta', 'este', 'esto',
++  'la', 'las', 'le', 'lo', 'los', 'me', 'mi', 'mis', 'por', 'para', 'que', 'se', 'su', 'sus', 'te', 'tu', 'un',
++  'una', 'unos', 'unas', 'y', 'o', 'u', 'favor', 'porfa', 'porfavor', 'quiero', 'quisiera', 'podes', 'puedes',
++  'podrias', 'puedo', 'necesito', 'dame', 'hace', 'haceme', 'hazme', 'che', 'hola', 'golondrina', 'mas', 'ahi',
++  'aca', 'aqui', 'ya', 'sobre', 'cual', 'cuales', 'donde', 'hay',
++])
++
++/** Palabras con el mismo sentido se llevan a una forma común. */
++const SINONIMOS: Record<string, string> = {
++  mostra: 'ver', muestra: 'ver', mostrame: 'ver', muestrame: 'ver', abri: 'abrir', abre: 'abrir', abrime: 'abrir',
++  ir: 'abrir', anda: 'abrir', llevame: 'abrir', lleva: 'abrir', vamos: 'abrir', navega: 'abrir',
++  busca: 'buscar', buscame: 'buscar', encontra: 'buscar', encuentra: 'buscar', encontrar: 'buscar',
++  manda: 'enviar', mandar: 'enviar', envia: 'enviar', enviale: 'enviar', mandale: 'enviar', escribi: 'enviar',
++  escribe: 'enviar', escribir: 'enviar', deci: 'enviar', decir: 'enviar', di: 'enviar', decile: 'enviar',
++  filtra: 'filtrar', filtrame: 'filtrar', mostrar: 'ver', ensena: 'ver', ensename: 'ver',
++  crea: 'crear', agrega: 'crear', agregar: 'crear', nuevo: 'crear', nueva: 'crear', alta: 'crear', cargar: 'crear',
++  carga: 'crear', añadir: 'crear', anadir: 'crear',
++  borra: 'borrar', elimina: 'borrar', eliminar: 'borrar', quita: 'borrar', quitar: 'borrar', saca: 'borrar',
++  edita: 'editar', modifica: 'editar', modificar: 'editar', cambia: 'cambiar', corregir: 'editar', corregi: 'editar',
++  contacta: 'contactar', contactar: 'contactar', consultar: 'consultar', consulta: 'consultar', pregunta: 'consultar',
++  preguntar: 'consultar', salir: 'salir', sali: 'salir', cerrar: 'salir', desconectar: 'salir',
++  entra: 'ingresar', entrar: 'ingresar', ingresa: 'ingresar', accede: 'ingresar', acceder: 'ingresar', acceso: 'ingresar',
++  privado: 'directo', dm: 'directo', mp: 'directo', md: 'directo',
++}
++
++export function normalizar(texto: string): string {
++  return texto
++    .toLowerCase()
++    .normalize('NFD')
++    .replace(/[̀-ͯ]/g, '')
++    .replace(/[^a-z0-9ñ\s{}]/g, ' ')
++    .replace(/\s+/g, ' ')
++    .trim()
++}
++
++/** Raíz muy simple: sinónimo o primeras 5 letras (plural/conjugación). */
++export function raiz(palabra: string): string {
++  const sinonimo = SINONIMOS[palabra]
++  if (sinonimo) return sinonimo
++  // Pronombres pegados al verbo: "escribirle", "mandame", "buscalos".
++  const sinEnclitico = palabra.length > 5 ? palabra.replace(/(selo|sela|melo|mela|les|los|las|nos|le|lo|la|me|te)$/, '') : palabra
++  if (sinEnclitico !== palabra) {
++    const s = SINONIMOS[sinEnclitico] ?? SINONIMOS[`${sinEnclitico}r`]
++    if (s) return s
++  }
++  let p = palabra
++  if (p.length > 4 && p.endsWith('es')) p = p.slice(0, -2)
++  else if (p.length > 3 && p.endsWith('s')) p = p.slice(0, -1)
++  return p.slice(0, 5)
++}
++
++export function palabras(texto: string): string[] {
++  return normalizar(texto).split(' ').filter(Boolean)
++}
++
++export function raices(texto: string, conStopwords = false): string[] {
++  return palabras(texto)
++    .filter((p) => conStopwords || !STOPWORDS.has(p))
++    .filter((p) => !p.startsWith('{'))
++    .map(raiz)
++}
++
++export function distancia(a: string, b: string): number {
++  if (a === b) return 0
++  const fila = Array.from({ length: b.length + 1 }, (_, i) => i)
++  for (let i = 1; i <= a.length; i++) {
++    let previo = fila[0]
++    fila[0] = i
++    for (let j = 1; j <= b.length; j++) {
++      const temp = fila[j]
++      fila[j] = Math.min(fila[j] + 1, fila[j - 1] + 1, previo + (a[i - 1] === b[j - 1] ? 0 : 1))
++      previo = temp
++    }
++  }
++  return fila[b.length]
++}
++
++export function parecidas(a: string, b: string): boolean {
++  if (a === b) return true
++  if (a.length < 5 || b.length < 5) return false
++  return distancia(a, b) <= 1
++}
++
++/** Qué fracción de las raíces de `patron` aparecen en `consulta` (0..1). */
++export function cobertura(consulta: string[], patron: string[]): number {
++  if (patron.length === 0) return 0
++  let encontradas = 0
++  for (const r of patron) if (consulta.some((c) => parecidas(c, r))) encontradas++
++  return encontradas / patron.length
++}
++
++/**
++ * Busca alguna de las opciones dentro del texto (tolerante a acentos, plurales
++ * y errores de una letra). Devuelve la opción original o null.
++ */
++export function buscarOpcion(texto: string, opciones: string[]): string | null {
++  const norm = ` ${normalizar(texto)} `
++  // 1) coincidencia literal, la opción más larga gana
++  const ordenadas = [...opciones].sort((a, b) => b.length - a.length)
++  for (const op of ordenadas) {
++    const n = normalizar(op)
++    if (n && norm.includes(` ${n} `)) return op
++  }
++  // 2) por raíces
++  const consulta = raices(texto, true)
++  let mejor: string | null = null
++  let mejorPuntaje = 0
++  for (const op of opciones) {
++    const r = raices(op, true)
++    const c = cobertura(consulta, r)
++    if (c > mejorPuntaje && c >= 0.99) {
++      mejor = op
++      mejorPuntaje = c
++    }
++  }
++  return mejor
++}
++
++/** Firma corta de un texto libre para poder contarlo como hábito. */
++export function claveTexto(texto: string): string {
++  return normalizar(texto).slice(0, 60)
++}
+diff --git a/frontend/src/golondrina/tipos.ts b/frontend/src/golondrina/tipos.ts
+new file mode 100644
+index 0000000..208ed32
+--- /dev/null
++++ b/frontend/src/golondrina/tipos.ts
+@@ -0,0 +1,123 @@
++/**
++ * Golondrina — tipos compartidos.
++ *
++ * Una "acción" es algo que el sistema sabe hacer (navegar, buscar, enviar un
++ * mensaje...). El asistente las ejecuta a pedido del usuario y Golondrina las
++ * observa para aprender hábitos y luego sugerirlas en el momento oportuno.
++ */
++
++export type ValorContexto = string | number | boolean | null | undefined
++
++/** Dónde está el usuario y qué está pasando en el sistema. */
++export interface Contexto {
++  /** Pantalla o sección actual (ej: "catalogo", "admin", "chat-general"). */
++  seccion: string
++  /** Datos extra que la app quiera aportar (ej: { conversacion: 'dm' }). */
++  extra?: Record<string, ValorContexto>
++}
++
++export type Parametros = Record<string, string>
++
++export interface ParametroAccion {
++  nombre: string
++  /** Valores posibles; el asistente los reconoce dentro de la frase del usuario. */
++  opciones?: () => string[]
++  /** Si es texto libre, se toma lo que sigue a las palabras de la frase. */
++  libre?: boolean
++  requerido?: boolean
++  /** Pregunta que hace el asistente si falta el parámetro. */
++  pregunta?: string
++  /**
++   * Si es false, el valor no forma parte del "hábito" aprendido
++   * (útil para textos largos o datos sensibles). Por defecto true.
++   */
++  memorizable?: boolean
++}
++
++export type ResultadoAccion = void | string | Promise<void | string>
++
++export interface Accion {
++  id: string
++  /** Texto corto que se muestra en botones: "Ver puertas". Puede usar {param}. */
++  titulo: string
++  descripcion?: string
++  icono?: string
++  /**
++   * Frases de ejemplo en lenguaje natural. Usá {nombreParametro} para marcar
++   * dónde va un parámetro: "buscar {consulta}", "enviar {texto}".
++   */
++  frases?: string[]
++  parametros?: ParametroAccion[]
++  /** Secciones donde la acción tiene sentido. Vacío = en todas. */
++  secciones?: string[]
++  /** Si devuelve false la acción no se ofrece ni se ejecuta. */
++  disponible?: (ctx: Contexto) => boolean
++  /** Qué le falta al usuario cuando no está disponible (ej: "Primero ingresá a gestión"). */
++  requisito?: string
++  ejecutar: (parametros: Parametros, ctx: Contexto) => ResultadoAccion
++  /** Golondrina puede presentarla al usuario aunque nunca la haya usado. */
++  descubrible?: boolean
++  /** Cómo hacerlo a mano (se muestra al enseñar la acción). */
++  comoHacerlo?: string
++}
++
++export type Via = 'manual' | 'asistente' | 'golondrina'
++
++export interface Evento {
++  accion: string
++  firma: string
++  parametros: Parametros
++  seccion: string
++  franja: Franja
++  via: Via
++  t: number
++}
++
++export type Franja = 'madrugada' | 'manana' | 'tarde' | 'noche'
++
++export type TipoSugerencia = 'siguiente' | 'habito' | 'entrada' | 'atajo' | 'descubrir'
++
++export interface Sugerencia {
++  /** Identificador estable para no repetir / silenciar. */
++  clave: string
++  tipo: TipoSugerencia
++  accion: string
++  parametros: Parametros
++  /** Mensaje que muestra Golondrina. */
++  mensaje: string
++  /** Texto del botón principal. */
++  boton: string
++  /** 0..1 */
++  confianza: number
++}
++
++export interface OpcionesGolondrina {
++  /** Identifica el sistema; separa la memoria entre apps. */
++  app: string
++  /** Nombre visible del asistente. */
++  nombre?: string
++  acciones: Accion[]
++  saludo?: string
++  colorPrimario?: string
++  colorTexto?: string
++  posicion?: 'derecha' | 'izquierda'
++  /** Distancia al borde inferior en px (para no tapar otros botones flotantes). */
++  abajo?: number
++  /** Repeticiones mínimas para considerar algo un hábito. Default 3. */
++  minRepeticiones?: number
++  /** Mostrar sugerencias automáticamente. Default true. */
++  sugerir?: boolean
++  /** Contenedor donde montar la UI. Default document.body. */
++  contenedor?: HTMLElement
++  /** Escuchar clics en elementos con data-golondrina="idAccion". Default true. */
++  capturarClics?: boolean
++  /**
++   * Intérprete opcional (por ejemplo un LLM) para frases que el motor local no
++   * entiende. Debe devolver la acción y sus parámetros, o null.
++   */
++  interpretar?: (texto: string, acciones: Accion[], ctx: Contexto) => Promise<{ accion: string; parametros?: Parametros } | null>
++  /** Almacenamiento; por defecto localStorage. */
++  almacenamiento?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
++  /** Reloj inyectable (tests). */
++  ahora?: () => number
++}
+diff --git a/frontend/src/golondrina/ui.ts b/frontend/src/golondrina/ui.ts
+new file mode 100644
+index 0000000..f85f7bc
+--- /dev/null
++++ b/frontend/src/golondrina/ui.ts
+@@ -0,0 +1,261 @@
++/**
++ * Interfaz de Golondrina: botón flotante, panel del asistente y la "golondrina"
++ * que llega volando con una sugerencia. Usa Shadow DOM para no mezclar estilos
++ * con el sistema anfitrión (funciona igual en React, Angular o HTML plano).
++ */
++
++export interface Boton {
++  texto: string
++  principal?: boolean
++  alHacer: () => void
++}
++
++export interface OpcionesUI {
++  nombre: string
++  colorPrimario: string
++  colorTexto: string
++  posicion: 'derecha' | 'izquierda'
++  abajo: number
++  contenedor: HTMLElement
++  alEnviar: (texto: string) => void
++  alAbrir: () => void
++}
++
++const SILUETA = `
++<svg viewBox="0 0 64 64" aria-hidden="true" class="silueta">
++  <path d="M6 30c8-1 15 1 21 5 2-7 7-13 15-16 6-2 12-1 16 2-4 0-7 1-9 3l7 1-8 3c-2 7-7 13-15 16l-9 12-1-11c-5-1-9-4-12-8l-11 9 6-13c-1-1-1-2 0-3z" fill="currentColor"/>
++  <circle cx="47" cy="22" r="1.6" fill="var(--g-fondo)"/>
++</svg>`
++
++const ESTILOS = (o: OpcionesUI) => `
++:host { all: initial; }
++* { box-sizing: border-box; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
++.raiz { --g-color: ${o.colorPrimario}; --g-texto: ${o.colorTexto}; --g-fondo: #ffffff; --g-tinta: #1d2330; --g-suave: #f2f4f8;
++  position: fixed; ${o.posicion === 'derecha' ? 'right' : 'left'}: 20px; bottom: ${o.abajo}px; z-index: 2147483000;
++  display: flex; flex-direction: column; align-items: ${o.posicion === 'derecha' ? 'flex-end' : 'flex-start'}; gap: 12px; }
++.lanzador { width: 58px; height: 58px; border-radius: 50%; border: none; cursor: pointer; background: var(--g-color); color: var(--g-texto);
++  box-shadow: 0 8px 24px rgba(0,0,0,.25); display: grid; place-items: center; transition: transform .2s; position: relative; }
++.lanzador:hover { transform: translateY(-2px) scale(1.04); }
++.lanzador:focus-visible, button:focus-visible, input:focus-visible { outline: 3px solid #7aa7ff; outline-offset: 2px; }
++.lanzador .silueta { width: 34px; height: 34px; }
++.lanzador .punto { position: absolute; top: 4px; right: 4px; width: 12px; height: 12px; border-radius: 50%; background: #ffb020; border: 2px solid var(--g-fondo); display: none; }
++.lanzador.aviso .punto { display: block; }
++.panel { width: min(370px, calc(100vw - 32px)); height: min(520px, calc(100vh - 120px)); background: var(--g-fondo); color: var(--g-tinta);
++  border-radius: 18px; box-shadow: 0 18px 50px rgba(0,0,0,.28); display: none; flex-direction: column; overflow: hidden; }
++.panel.abierto { display: flex; animation: aparecer .22s ease-out; }
++.cabecera { background: var(--g-color); color: var(--g-texto); padding: 14px 16px; display: flex; align-items: center; gap: 10px; }
++.cabecera .silueta { width: 28px; height: 28px; }
++.cabecera strong { font-size: 15px; display: block; }
++.cabecera small { opacity: .85; font-size: 12px; }
++.cabecera button { margin-left: auto; background: transparent; border: none; color: inherit; font-size: 22px; cursor: pointer; line-height: 1; }
++.mensajes { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; background: var(--g-suave); }
++.msg { max-width: 86%; padding: 9px 12px; border-radius: 14px; font-size: 14px; line-height: 1.4; white-space: pre-line; word-wrap: break-word; }
++.msg.golondrina { background: var(--g-fondo); align-self: flex-start; border-bottom-left-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
++.msg.usuario { background: var(--g-color); color: var(--g-texto); align-self: flex-end; border-bottom-right-radius: 4px; }
++.botones { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
++.botones button, .chips button { border: 1px solid var(--g-color); background: var(--g-fondo); color: var(--g-tinta); border-radius: 999px;
++  padding: 6px 11px; font-size: 13px; cursor: pointer; }
++.botones button.principal { background: var(--g-color); color: var(--g-texto); }
++.chips { display: flex; gap: 6px; padding: 8px 12px 0; overflow-x: auto; background: var(--g-fondo); }
++.chips:empty { display: none; }
++.chips button { white-space: nowrap; }
++.chips::before { content: '✦'; color: var(--g-color); align-self: center; font-size: 13px; }
++form { display: flex; gap: 8px; padding: 10px 12px 12px; background: var(--g-fondo); }
++input { flex: 1; border: 1px solid #d5d9e2; border-radius: 999px; padding: 10px 14px; font-size: 14px; color: var(--g-tinta); background: var(--g-fondo); }
++form button { border: none; background: var(--g-color); color: var(--g-texto); border-radius: 999px; padding: 0 16px; cursor: pointer; font-size: 14px; }
++.vuelo { width: min(320px, calc(100vw - 32px)); background: var(--g-fondo); color: var(--g-tinta); border-radius: 16px; padding: 14px 14px 12px;
++  box-shadow: 0 14px 40px rgba(0,0,0,.25); position: relative; display: none; border-top: 4px solid var(--g-color); }
++.vuelo.visible { display: block; animation: volar .7s cubic-bezier(.2,.9,.3,1.2); }
++.vuelo .ave { position: absolute; top: -22px; ${o.posicion === 'derecha' ? 'right' : 'left'}: 18px; width: 36px; height: 36px; color: var(--g-color); animation: aletear 1.4s ease-in-out infinite; }
++.vuelo .ave .silueta { width: 36px; height: 36px; }
++.vuelo p { margin: 4px 0 0; font-size: 14px; line-height: 1.45; }
++.vuelo .etiqueta { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--g-color); font-weight: 700; }
++.vuelo .cerrar { position: absolute; top: 6px; right: 8px; background: none; border: none; font-size: 18px; cursor: pointer; color: #8a90a0; }
++.vuelo .silenciar { background: none; border: none; color: #8a90a0; font-size: 12px; cursor: pointer; padding: 6px 2px 0; text-decoration: underline; }
++@keyframes aparecer { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
++@keyframes volar { 0% { opacity: 0; transform: translate(${o.posicion === 'derecha' ? '-' : ''}60px, -60px) rotate(${o.posicion === 'derecha' ? '-' : ''}6deg) scale(.9); } 100% { opacity: 1; transform: none; } }
++@keyframes aletear { 0%,100% { transform: translateY(0) rotate(-4deg); } 50% { transform: translateY(-4px) rotate(4deg); } }
++@media (prefers-reduced-motion: reduce) { .vuelo.visible, .panel.abierto, .vuelo .ave { animation: none; } }
++@media (prefers-color-scheme: dark) { .raiz:not(.claro) { --g-fondo: #1f2430; --g-tinta: #eef1f7; --g-suave: #171b24; } .raiz:not(.claro) input { border-color: #3a4152; } }
++.raiz.oscuro { --g-fondo: #1f2430; --g-tinta: #eef1f7; --g-suave: #171b24; } .raiz.oscuro input { border-color: #3a4152; }
++`
++
++export class InterfazGolondrina {
++  private readonly host: HTMLElement
++  private readonly raiz: ShadowRoot
++  private readonly panel: HTMLElement
++  private readonly mensajes: HTMLElement
++  private readonly chips: HTMLElement
++  private readonly entrada: HTMLInputElement
++  private readonly lanzador: HTMLButtonElement
++  private readonly vuelo: HTMLElement
++  private readonly opciones: OpcionesUI
++  private temporizadorVuelo: ReturnType<typeof setTimeout> | null = null
++
++  constructor(opciones: OpcionesUI) {
++    this.opciones = opciones
++    this.host = document.createElement('golondrina-asistente')
++    this.raiz = this.host.attachShadow({ mode: 'open' })
++    this.raiz.innerHTML = `
++      <style>${ESTILOS(opciones)}</style>
++      <div class="raiz">
++        <section class="vuelo" role="status" aria-live="polite">
++          <span class="ave">${SILUETA}</span>
++          <button class="cerrar" aria-label="Cerrar sugerencia">×</button>
++          <span class="etiqueta">${escapar(opciones.nombre)} aprendió algo</span>
++          <p></p>
++          <div class="botones"></div>
++          <button class="silenciar">No me muestres esto de nuevo</button>
++        </section>
++        <section class="panel" role="dialog" aria-label="Asistente ${escapar(opciones.nombre)}">
++          <header class="cabecera">${SILUETA}<div><strong>${escapar(opciones.nombre)}</strong><small>Tu asistente · aprende de lo que hacés</small></div>
++            <button class="cerrar-panel" aria-label="Cerrar asistente">×</button></header>
++          <div class="mensajes" aria-live="polite"></div>
++          <div class="chips"></div>
++          <form><input type="text" placeholder="Pedime lo que necesites..." aria-label="Mensaje para ${escapar(opciones.nombre)}" maxlength="300"/>
++            <button type="submit">Enviar</button></form>
++        </section>
++        <button class="lanzador" aria-label="Abrir asistente ${escapar(opciones.nombre)}" title="${escapar(opciones.nombre)}">${SILUETA}<span class="punto"></span></button>
++      </div>`
++    this.panel = this.raiz.querySelector('.panel')!
++    this.mensajes = this.raiz.querySelector('.mensajes')!
++    this.chips = this.raiz.querySelector('.chips')!
++    this.entrada = this.raiz.querySelector('input')!
++    this.lanzador = this.raiz.querySelector('.lanzador')!
++    this.vuelo = this.raiz.querySelector('.vuelo')!
++
++    this.lanzador.addEventListener('click', () => this.alternar())
++    this.raiz.querySelector('.cerrar-panel')!.addEventListener('click', () => this.cerrar())
++    this.raiz.querySelector('form')!.addEventListener('submit', (e) => {
++      e.preventDefault()
++      const texto = this.entrada.value.trim()
++      if (!texto) return
++      this.entrada.value = ''
++      this.opciones.alEnviar(texto)
++    })
++    this.raiz.addEventListener('keydown', (e) => {
++      if ((e as KeyboardEvent).key === 'Escape') this.cerrar()
++    })
++    opciones.contenedor.appendChild(this.host)
++  }
++
++  /** 'auto' sigue al sistema operativo; 'claro'/'oscuro' lo fuerzan. */
++  definirTema(tema: 'auto' | 'claro' | 'oscuro') {
++    const raiz = this.raiz.querySelector('.raiz')!
++    raiz.classList.toggle('claro', tema === 'claro')
++    raiz.classList.toggle('oscuro', tema === 'oscuro')
++  }
++
++  get abierto() {
++    return this.panel.classList.contains('abierto')
++  }
++
++  alternar() {
++    if (this.abierto) this.cerrar()
++    else this.abrir()
++  }
++
++  abrir(textoInicial?: string) {
++    this.ocultarVuelo()
++    this.panel.classList.add('abierto')
++    this.lanzador.classList.remove('aviso')
++    this.opciones.alAbrir()
++    if (textoInicial !== undefined) this.entrada.value = textoInicial
++    setTimeout(() => this.entrada.focus(), 50)
++  }
++
++  cerrar() {
++    this.panel.classList.remove('abierto')
++  }
++
++  agregarMensaje(de: 'usuario' | 'golondrina', texto: string, botones: Boton[] = []) {
++    const div = document.createElement('div')
++    div.className = `msg ${de}`
++    div.textContent = texto
++    if (botones.length) {
++      const cont = document.createElement('div')
++      cont.className = 'botones'
++      for (const b of botones) {
++        const btn = document.createElement('button')
++        btn.type = 'button'
++        btn.textContent = b.texto
++        if (b.principal) btn.classList.add('principal')
++        btn.addEventListener('click', () => {
++          cont.querySelectorAll('button').forEach((x) => ((x as HTMLButtonElement).disabled = true))
++          b.alHacer()
++        })
++        cont.appendChild(btn)
++      }
++      div.appendChild(cont)
++    }
++    this.mensajes.appendChild(div)
++    this.mensajes.scrollTop = this.mensajes.scrollHeight
++    if (!this.abierto && de === 'golondrina') this.lanzador.classList.add('aviso')
++  }
++
++  mostrarChips(chips: Boton[]) {
++    this.chips.replaceChildren(
++      ...chips.map((c) => {
++        const b = document.createElement('button')
++        b.type = 'button'
++        b.textContent = c.texto
++        b.addEventListener('click', c.alHacer)
++        return b
++      }),
++    )
++  }
++
++  mostrarVuelo(mensaje: string, botones: Boton[], alCerrar: () => void, alSilenciar: () => void) {
++    if (this.abierto) return false
++    this.vuelo.querySelector('p')!.textContent = mensaje
++    const cont = this.vuelo.querySelector('.botones')!
++    cont.replaceChildren(
++      ...botones.map((b) => {
++        const btn = document.createElement('button')
++        btn.type = 'button'
++        btn.textContent = b.texto
++        if (b.principal) btn.classList.add('principal')
++        btn.addEventListener('click', () => {
++          this.ocultarVuelo()
++          b.alHacer()
++        })
++        return btn
++      }),
++    )
++    const cerrar = this.vuelo.querySelector('.cerrar') as HTMLButtonElement
++    cerrar.onclick = () => {
++      this.ocultarVuelo()
++      alCerrar()
++    }
++    const silenciar = this.vuelo.querySelector('.silenciar') as HTMLButtonElement
++    silenciar.onclick = () => {
++      this.ocultarVuelo()
++      alSilenciar()
++    }
++    this.vuelo.classList.remove('visible')
++    void this.vuelo.offsetWidth // reinicia la animación
++    this.vuelo.classList.add('visible')
++    if (this.temporizadorVuelo) clearTimeout(this.temporizadorVuelo)
++    this.temporizadorVuelo = setTimeout(() => this.ocultarVuelo(), 25000)
++    return true
++  }
++
++  get vueloVisible() {
++    return this.vuelo.classList.contains('visible')
++  }
++
++  ocultarVuelo() {
++    this.vuelo.classList.remove('visible')
++    if (this.temporizadorVuelo) clearTimeout(this.temporizadorVuelo)
++    this.temporizadorVuelo = null
++  }
++
++  destruir() {
++    this.ocultarVuelo()
++    this.host.remove()
++  }
++}
++
++function escapar(texto: string) {
++  return texto.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c)
++}
+diff --git a/frontend/src/pages/AdminPage.tsx b/frontend/src/pages/AdminPage.tsx
+index 6a2c4c9..285930b 100644
+--- a/frontend/src/pages/AdminPage.tsx
++++ b/frontend/src/pages/AdminPage.tsx
+@@ -1,4 +1,5 @@
+ import { useEffect, useState } from 'react'
++import { asistente } from '../asistente'
+ import { createCatalog, createProduct, deleteProduct, fetchProduct, updateProduct as updateProductRequest, uploadProductImage } from '../api'
+ import type { AdminProductForm, Catalogo, Categoria, Producto } from '../types'
+ import '../admin.css'
+@@ -8,6 +9,8 @@ type AdminPageProps = {
+   categorias: Categoria[]
+   catalogos: Catalogo[]
+   onCreated: () => Promise<void>
++  /** Pedido del asistente Golondrina para cargar un producto en el formulario. */
++  productToEdit?: { id: number; request: number } | null
+ }
+ 
+ const emptyProduct: AdminProductForm = {
+@@ -25,7 +28,7 @@ const emptyProduct: AdminProductForm = {
+   descripcion: '',
+ }
+ 
+-export function AdminPage({ productos, categorias, catalogos, onCreated }: Readonly<AdminPageProps>) {
++export function AdminPage({ productos, categorias, catalogos, onCreated, productToEdit }: Readonly<AdminPageProps>) {
+   const [productForm, setProductForm] = useState<AdminProductForm>({
+     ...emptyProduct,
+     catalogoId: catalogos[0]?.id.toString() ?? '',
+@@ -53,6 +56,14 @@ export function AdminPage({ productos, categorias, catalogos, onCreated }: Reado
+     }))
+   }, [catalogos, categorias])
+ 
++  useEffect(() => {
++    if (!productToEdit) return
++    const producto = productos.find((item) => item.id === productToEdit.id)
++    if (producto) startEditing(producto)
++    // Solo reacciona a un pedido nuevo del asistente.
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [productToEdit?.request])
++
+   async function submitProduct(event: { preventDefault: () => void }) {
+     event.preventDefault()
+     const validName = /^\p{L}+(?: \p{L}+)*$/u
+@@ -82,6 +93,7 @@ export function AdminPage({ productos, categorias, catalogos, onCreated }: Reado
+       const persistedProduct = await fetchProduct(product.id)
+       setStatus('')
+       setCompletedProduct({ action: wasEditing ? 'updated' : 'created', product: persistedProduct })
++      if (!wasEditing) asistente.registrar('nuevo-producto')
+       setProductForm({ ...emptyProduct, catalogoId: productForm.catalogoId, categoriaId: productForm.categoriaId })
+       setImages([])
+       setImageInputKey((current) => current + 1)
+@@ -154,6 +166,7 @@ export function AdminPage({ productos, categorias, catalogos, onCreated }: Reado
+     setPendingAction(null)
+     setPendingProduct(null)
+     if (action === 'edit') {
++      asistente.registrar('editar-producto', { producto: product.nombre })
+       startEditing(product)
+       return
+     }
+diff --git a/frontend/src/pages/CatalogPage.tsx b/frontend/src/pages/CatalogPage.tsx
+index f2506ce..6f6a098 100644
+--- a/frontend/src/pages/CatalogPage.tsx
++++ b/frontend/src/pages/CatalogPage.tsx
+@@ -1,4 +1,5 @@
+-import { useMemo, useState } from 'react'
++import { useEffect, useMemo } from 'react'
++import { asistente, coincideBusqueda } from '../asistente'
+ import { ProductCard } from '../components/ProductCard'
+ import type { Categoria, Producto } from '../types'
+ import { groupCategories } from '../utils/catalog'
+@@ -6,26 +7,34 @@ import { groupCategories } from '../utils/catalog'
+ type CatalogPageProps = {
+   productos: Producto[]
+   categorias: Categoria[]
+-  initialCategory?: number | null
++  search: string
++  onSearchChange: (search: string) => void
++  activeCategory: number | null
++  onCategoryChange: (categoryId: number | null) => void
+   cargando: boolean
+   error: string
+   onRefresh: () => void
+   onSelect: (producto: Producto) => void
+ }
+ 
+-export function CatalogPage({ productos, categorias, initialCategory = null, cargando, error, onRefresh, onSelect }: CatalogPageProps) {
+-  const [search, setSearch] = useState('')
+-  const [activeCategory, setActiveCategory] = useState<number | null>(initialCategory)
++export function CatalogPage({ productos, categorias, search, onSearchChange, activeCategory, onCategoryChange, cargando, error, onRefresh, onSelect }: CatalogPageProps) {
+   const groups = groupCategories(categorias)
+   const filteredProducts = useMemo(() => {
+-    const normalizedSearch = search.toLowerCase()
+     return productos.filter((producto) => {
+-      const matchesSearch = `${producto.nombre} ${producto.codigo} ${producto.descripcion ?? ''}`.toLowerCase().includes(normalizedSearch)
++      const matchesSearch = coincideBusqueda(producto, search)
+       const matchesCategory = activeCategory === null || producto.categoriaId === activeCategory
+       return matchesSearch && matchesCategory
+     })
+   }, [activeCategory, productos, search])
+ 
++  // Golondrina aprende las búsquedas cuando el usuario deja de escribir.
++  useEffect(() => {
++    const consulta = search.trim()
++    if (consulta.length < 3) return
++    const timer = setTimeout(() => asistente.registrar('buscar', { consulta }), 1500)
++    return () => clearTimeout(timer)
++  }, [search])
++
+   return (
+     <>
+       <section className="hero-band">
+@@ -56,19 +65,19 @@ export function CatalogPage({ productos, categorias, initialCategory = null, car
+           <div className="col-12 col-lg-5">
+             <div className="search-box">
+               <span>⌕</span>
+-              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nombre o codigo..." />
++              <input value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder="Buscar por nombre o codigo..." />
+             </div>
+           </div>
+           <div className="col-12 col-lg-7">
+             <div className="category-filters">
+-              <button className={`filter-pill ${activeCategory === null ? 'selected' : ''}`} onClick={() => setActiveCategory(null)}>Todo</button>
++              <button className={`filter-pill ${activeCategory === null ? 'selected' : ''}`} onClick={() => onCategoryChange(null)}>Todo</button>
+               {groups.map((group) => (
+                 <div className="filter-group" key={group.name}>
+                   <small>{group.name}</small>
+-                  <div>{group.items.map((category) => <button className={`filter-pill ${activeCategory === category.id ? 'selected' : ''}`} key={category.id} onClick={() => setActiveCategory(category.id)}>{category.nombre}</button>)}</div>
++                  <div>{group.items.map((category) => <button className={`filter-pill ${activeCategory === category.id ? 'selected' : ''}`} key={category.id} onClick={() => onCategoryChange(category.id)}>{category.nombre}</button>)}</div>
+                 </div>
+               ))}
+-              <button className="refresh-button" onClick={onRefresh} title="Actualizar catalogo">↻</button>
++              <button className="refresh-button" data-golondrina="actualizar" onClick={onRefresh} title="Actualizar catalogo">↻</button>
+             </div>
+           </div>
+         </div>
+-- 
+2.43.0
+
