@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { asistente } from '../asistente'
 import { createCatalog, createProduct, deleteProduct, fetchProduct, updateProduct as updateProductRequest, uploadProductImage } from '../api'
 import type { AdminProductForm, Catalogo, Categoria, Producto } from '../types'
 import '../admin.css'
@@ -8,6 +9,8 @@ type AdminPageProps = {
   categorias: Categoria[]
   catalogos: Catalogo[]
   onCreated: () => Promise<void>
+  /** Pedido del asistente Golondrina para cargar un producto en el formulario. */
+  productToEdit?: { id: number; request: number } | null
 }
 
 const emptyProduct: AdminProductForm = {
@@ -25,7 +28,7 @@ const emptyProduct: AdminProductForm = {
   descripcion: '',
 }
 
-export function AdminPage({ productos, categorias, catalogos, onCreated }: Readonly<AdminPageProps>) {
+export function AdminPage({ productos, categorias, catalogos, onCreated, productToEdit }: Readonly<AdminPageProps>) {
   const [productForm, setProductForm] = useState<AdminProductForm>({
     ...emptyProduct,
     catalogoId: catalogos[0]?.id.toString() ?? '',
@@ -52,6 +55,14 @@ export function AdminPage({ productos, categorias, catalogos, onCreated }: Reado
         : categorias[0]?.id.toString() ?? '',
     }))
   }, [catalogos, categorias])
+
+  useEffect(() => {
+    if (!productToEdit) return
+    const producto = productos.find((item) => item.id === productToEdit.id)
+    if (producto) startEditing(producto)
+    // Solo reacciona a un pedido nuevo del asistente.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productToEdit?.request])
 
   async function submitProduct(event: { preventDefault: () => void }) {
     event.preventDefault()
@@ -82,6 +93,7 @@ export function AdminPage({ productos, categorias, catalogos, onCreated }: Reado
       const persistedProduct = await fetchProduct(product.id)
       setStatus('')
       setCompletedProduct({ action: wasEditing ? 'updated' : 'created', product: persistedProduct })
+      if (!wasEditing) asistente.registrar('nuevo-producto')
       setProductForm({ ...emptyProduct, catalogoId: productForm.catalogoId, categoriaId: productForm.categoriaId })
       setImages([])
       setImageInputKey((current) => current + 1)
@@ -154,6 +166,7 @@ export function AdminPage({ productos, categorias, catalogos, onCreated }: Reado
     setPendingAction(null)
     setPendingProduct(null)
     if (action === 'edit') {
+      asistente.registrar('editar-producto', { producto: product.nombre })
       startEditing(product)
       return
     }
