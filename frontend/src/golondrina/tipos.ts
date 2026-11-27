@@ -91,6 +91,22 @@ export interface Sugerencia {
   confianza: number
 }
 
+/** Lo que el usuario elige en «Golondrina 100% configurable». Se guarda en su navegador. */
+export interface ConfigGolondrina {
+  /** Ya pasó por la configuración (para no volver a pedírsela). */
+  configurada: boolean
+  /** Aprender de lo que hace (si es false, no anota nada nuevo). */
+  aprender: boolean
+  /** Salir volando con sugerencias. */
+  sugerir: boolean
+  /** Qué tipos de sugerencia quiere ver. */
+  tipos: TipoSugerencia[]
+  /** Cuántas veces tiene que repetir algo para que Golondrina lo tome como costumbre. */
+  minRepeticiones: number
+  /** De qué lado aparece el botón. */
+  posicion: 'derecha' | 'izquierda'
+}
+
 export interface OpcionesGolondrina {
   /** Identifica el sistema; separa la memoria entre apps. */
   app: string
@@ -107,6 +123,8 @@ export interface OpcionesGolondrina {
   minRepeticiones?: number
   /** Mostrar sugerencias automáticamente. Default true. */
   sugerir?: boolean
+  /** Se llama cuando el usuario le pide al asistente «configurar» (la app abre su panel). */
+  alConfigurar?: () => void
   /** Contenedor donde montar la UI. Default document.body. */
   contenedor?: HTMLElement
   /** Escuchar clics en elementos con data-golondrina="idAccion". Default true. */

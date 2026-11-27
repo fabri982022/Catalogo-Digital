@@ -11,6 +11,8 @@ export const asistente = new Golondrina({
   app: 'catalogo-digital',
   acciones: [],
   colorPrimario: '#111111',
+  // «configurar» en el asistente abre el panel de Golondrina 100% configurable.
+  alConfigurar: () => window.dispatchEvent(new CustomEvent('golondrina:configurar')), // = EVENTO_CONFIGURAR
   saludo:
     '¡Hola! Soy Golondrina. Decime qué buscás («puertas de madera», «ventanas corredizas») y te lo muestro, ' +
     'o pedime consultar un producto por WhatsApp. Con el uso aprendo qué mirás y te lo dejo a mano.',

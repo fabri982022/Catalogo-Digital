@@ -4,6 +4,7 @@ import './App.css'
 import './responsive.css'
 import { clearAuthentication, fetchCatalogData } from './api'
 import { Navbar } from './components/Navbar'
+import { GolondrinaBanner, GolondrinaConfig } from './components/GolondrinaConfig'
 import { ProductModal } from './components/ProductModal'
 import { AdminPage } from './pages/AdminPage'
 import { CatalogPage } from './pages/CatalogPage'
@@ -143,6 +144,9 @@ function App() {
   return (
     <main className="app-shell">
       <Navbar usuario={usuario} view={view} onNavigate={navigate} onLogout={logout} />
+      {/* Golondrina 100% configurable: lo primero que ve el usuario hasta que la configura. */}
+      <GolondrinaBanner />
+      <GolondrinaConfig />
       {page}
       {selectedProduct && <ProductModal producto={selectedProduct} onClose={() => setSelectedProduct(null)} />}
       <footer className="app-footer"><span>CATALOGO DIGITAL</span><span>Puertas, ventanas y espacios con caracter.</span><span>Integrantes: {import.meta.env.VITE_TEAM_MEMBERS ?? 'Equipo de desarrollo'}</span></footer>

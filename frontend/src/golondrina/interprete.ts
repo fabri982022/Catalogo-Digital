@@ -174,6 +174,10 @@ export function esSilencio(texto: string): 'silenciar' | 'activar' | null {
   return null
 }
 
+export function esConfigurar(texto: string): boolean {
+  return /^(configura(r|cion)?|ajustes|preferencias|opciones|cambia(r)? (la )?configuracion)\b/.test(normalizar(texto))
+}
+
 export function esCancelar(texto: string): boolean {
   return /^(cancelar|cancela|nada|dejalo|deja|olvidalo|no)$/.test(normalizar(texto))
 }
