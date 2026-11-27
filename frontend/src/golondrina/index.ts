@@ -15,6 +15,7 @@ import { ejemploFrase, generarSugerencias, resumenAprendido, tituloDe } from './
 import {
   accionAplica,
   esCancelar,
+  esConfigurar,
   esOlvido,
   esPedidoDeAyuda,
   esPreguntaAprendizaje,
@@ -24,10 +25,22 @@ import {
 } from './interprete'
 import { Memoria } from './memoria'
 import { buscarOpcion, normalizar } from './texto'
-import type { Accion, Contexto, OpcionesGolondrina, ParametroAccion, Parametros, Sugerencia, ValorContexto, Via } from './tipos'
+import type { Accion, ConfigGolondrina, Contexto, OpcionesGolondrina, ParametroAccion, Parametros, Sugerencia, ValorContexto, Via } from './tipos'
 import { InterfazGolondrina, type Boton } from './ui'
 
 export type * from './tipos'
+
+/** Todos los tipos de sugerencia, en el orden en que se explican. */
+export const TIPOS_SUGERENCIA = ['siguiente', 'entrada', 'habito', 'atajo', 'descubrir'] as const
+
+const CONFIG_INICIAL: ConfigGolondrina = {
+  configurada: false,
+  aprender: true,
+  sugerir: true,
+  tipos: [...TIPOS_SUGERENCIA],
+  minRepeticiones: 3,
+  posicion: 'derecha',
+}
 
 /** Pausa mínima entre dos sugerencias "en vuelo". */
 const PAUSA_ENTRE_VUELOS_MS = 90 * 1000
@@ -54,11 +67,63 @@ export class Golondrina {
   private ejecutando = 0
   private temaActual: 'auto' | 'claro' | 'oscuro' = 'auto'
   private readonly alClic = (e: Event) => this.capturarClic(e)
+  private config: ConfigGolondrina
+  private readonly oyentesConfig = new Set<(c: ConfigGolondrina) => void>()
 
   constructor(opciones: OpcionesGolondrina) {
     this.op = { nombre: 'Golondrina', minRepeticiones: 3, sugerir: true, ...opciones }
     this.memoria = new Memoria(opciones.app, opciones.almacenamiento, this.ahora)
     this.definirAcciones(opciones.acciones)
+    this.config = this.leerConfig()
+  }
+
+  // ───────────────────────── Configuración (100% configurable) ─────────────────────────
+
+  private get claveConfig() {
+    return `golondrina:${this.op.app}:config`
+  }
+
+  private leerConfig(): ConfigGolondrina {
+    const base = { ...CONFIG_INICIAL, minRepeticiones: this.op.minRepeticiones, posicion: this.op.posicion ?? 'derecha' }
+    try {
+      const guardada = typeof localStorage !== 'undefined' ? localStorage.getItem(this.claveConfig) : null
+      return guardada ? { ...base, ...(JSON.parse(guardada) as Partial<ConfigGolondrina>) } : base
+    } catch {
+      return base
+    }
+  }
+
+  /** La configuración actual (copia). */
+  get configuracion(): ConfigGolondrina {
+    return { ...this.config, tipos: [...this.config.tipos] }
+  }
+
+  /** Cambia la configuración, la guarda en el navegador y la aplica al momento. */
+  configurar(cambios: Partial<ConfigGolondrina>) {
+    const antes = this.config
+    this.config = { ...antes, ...cambios }
+    try {
+      localStorage.setItem(this.claveConfig, JSON.stringify(this.config))
+    } catch {
+      /* sin almacenamiento: vale para esta visita */
+    }
+    // Cambiar de lado el botón: se vuelve a dibujar la interfaz.
+    if (this.ui && antes.posicion !== this.config.posicion) {
+      this.destruir()
+      this.montar()
+    }
+    this.memoria.estado.silencio = !this.config.sugerir
+    this.memoria.guardar()
+    this.oyentesConfig.forEach((fn) => fn(this.configuracion))
+    this.programarEvaluacion(1500)
+  }
+
+  /** Avisa cada vez que cambia la configuración. Devuelve la función para dejar de escuchar. */
+  alCambiarConfig(fn: (c: ConfigGolondrina) => void) {
+    this.oyentesConfig.add(fn)
+    return () => {
+      this.oyentesConfig.delete(fn)
+    }
   }
 
   private readonly ahora = () => (this.op?.ahora ?? Date.now)()
@@ -70,7 +135,7 @@ export class Golondrina {
       nombre: this.op.nombre,
       colorPrimario: this.op.colorPrimario ?? '#1f4e8c',
       colorTexto: this.op.colorTexto ?? '#ffffff',
-      posicion: this.op.posicion ?? 'derecha',
+      posicion: this.config.posicion,
       abajo: this.op.abajo ?? 20,
       contenedor: this.op.contenedor ?? document.body,
       alEnviar: (texto) => void this.escuchar(texto),
@@ -123,6 +188,8 @@ export class Golondrina {
   registrar(accionId: string, parametros: Parametros = {}, via: Via = 'manual') {
     // Lo que la app registre mientras el asistente ejecuta ya lo cuenta el asistente.
     if (via === 'manual' && this.ejecutando > 0) return
+    // Eligió que no aprenda: no se anota nada nuevo.
+    if (!this.config.aprender) return
     const accion = this.acciones.get(accionId)
     const memorizables = this.memorizables(accion, parametros)
     const firmaNueva = `${accionId}|${JSON.stringify(memorizables)}`
@@ -161,8 +228,8 @@ export class Golondrina {
       acciones: this.acciones,
       ctx: this.ctx,
       ahora: this.ahora(),
-      minRepeticiones: this.op.minRepeticiones,
-    })
+      minRepeticiones: this.config.minRepeticiones,
+    }).filter((s) => this.config.tipos.includes(s.tipo))
   }
 
   /** Ejecuta una acción del catálogo y la registra. */
@@ -195,9 +262,16 @@ export class Golondrina {
       if (valor) return this.completar(pendiente.accion, { ...pendiente.parametros, [pendiente.faltante.nombre]: valor }, pendiente.frase)
     }
 
+    if (esConfigurar(texto)) {
+      if (this.op.alConfigurar) {
+        this.op.alConfigurar()
+        return { texto: 'Te abrí la configuración: elegí qué hago y cómo te aviso.' }
+      }
+      return { texto: 'Desde acá todavía no puedo abrir la configuración.' }
+    }
     if (esPedidoDeAyuda(texto)) return this.ayuda()
     if (esPreguntaAprendizaje(texto)) {
-      return { texto: resumenAprendido(this.memoria, this.acciones, this.ahora(), this.op.minRepeticiones) }
+      return { texto: resumenAprendido(this.memoria, this.acciones, this.ahora(), this.config.minRepeticiones) }
     }
     if (esOlvido(texto)) {
       return {
@@ -210,8 +284,8 @@ export class Golondrina {
     }
     const silencio = esSilencio(texto)
     if (silencio) {
-      this.memoria.estado.silencio = silencio === 'silenciar'
-      this.memoria.guardar()
+      // Queda guardado también en la configuración.
+      this.configurar({ sugerir: silencio !== 'silenciar' })
       return {
         texto: silencio === 'silenciar'
           ? 'Entendido, no voy a interrumpirte con sugerencias. Sigo aprendiendo; pedime «volvé a sugerir» cuando quieras.'
@@ -292,7 +366,7 @@ export class Golondrina {
     const disponibles = [...this.acciones.values()].filter((a) => accionAplica(a, this.ctx) && a.frases?.length)
     const lista = disponibles.slice(0, 8).map((a) => `• «${ejemploFrase(a, {})}» — ${a.descripcion ?? a.titulo}`)
     return {
-      texto: `Soy ${this.op.nombre}. Pedime las cosas con tus palabras y las hago por vos. Mientras tanto aprendo tus costumbres y te las adelanto.\n\nAquí puedo:\n${lista.join('\n')}\n\nTambién: «¿qué aprendiste?», «no me sugieras», «olvidá todo».`,
+      texto: `Soy ${this.op.nombre}. Pedime las cosas con tus palabras y las hago por vos. Mientras tanto aprendo tus costumbres y te las adelanto.\n\nAquí puedo:\n${lista.join('\n')}\n\nTambién: «configurar», «¿qué aprendiste?», «no me sugieras», «olvidá todo».`,
       botones: disponibles.slice(0, 3).map((a) => ({ texto: ejemploFrase(a, {}), alHacer: () => this.ui?.abrir(ejemploFrase(a, {})) })),
     }
   }
@@ -336,7 +410,7 @@ export class Golondrina {
       this.actualizarChips()
       return
     }
-    if (!this.op.sugerir || this.memoria.estado.silencio) return
+    if (!this.op.sugerir || !this.config.sugerir || this.memoria.estado.silencio) return
     if (typeof document !== 'undefined' && document.hidden) return
     const s = this.sugerencias().find((x) => x.confianza >= 0.3)
     if (!s) return

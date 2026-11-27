@@ -1,0 +1,33 @@
+/* «Golondrina 100% configurable»: cartel de bienvenida y panel de configuración. */
+.g-banner{position:relative;z-index:5;display:flex;align-items:center;gap:14px;padding:12px 4%;background:var(--ink);color:#f4f1eb;font-size:14px}
+.g-banner p{margin:0;flex:1;line-height:1.4}
+.g-banner strong{color:var(--lime)}
+.g-banner button{border:0;background:var(--lime);color:var(--ink);font-weight:700;padding:9px 18px;white-space:nowrap}
+.g-nav{border:1px solid var(--line);background:transparent;color:var(--ink);display:inline-flex;align-items:center;gap:7px;padding:6px 12px;font-size:13px;font-weight:700;margin-right:14px}
+.g-nav:hover{border-color:var(--ink)}
+.g-config{position:relative;max-width:640px;width:100%;max-height:90vh;overflow:auto;background:var(--paper);padding:34px 36px 26px;animation:rise .35s ease}
+.g-config-cabecera{display:flex;align-items:center;gap:14px;margin-bottom:8px}
+.g-config-cabecera .eyebrow{margin-bottom:6px}
+.g-config-cabecera h2{font-size:32px;letter-spacing:-.03em;margin:0}
+.g-config section{border-top:1px solid var(--line);padding:16px 0}
+.g-config h3{font-size:15px;font-weight:700;margin:0 0 10px}
+.g-opcion{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.4;margin:0 0 8px;cursor:pointer}
+.g-opcion input{margin-top:3px;accent-color:var(--violet);width:16px;height:16px;flex:none}
+.g-opcion small{color:var(--muted)}
+.g-tipos{padding-left:26px}
+.g-apagado{opacity:.45}
+.g-chips{display:flex;flex-wrap:wrap;gap:8px}
+.g-secundario{border:1px solid var(--line);background:transparent;padding:8px 14px;font-size:13px}
+.g-secundario:hover{border-color:#b23b2e;color:#b23b2e}
+.g-ok{margin-left:12px;color:var(--violet);font-size:13px}
+.g-config-pie{display:flex;align-items:center;justify-content:space-between;gap:16px;border-top:1px solid var(--line);padding-top:16px}
+.g-config-pie small{color:var(--muted);font-size:12px}
+.g-principal{border:0;background:var(--violet);color:#fff;font-weight:700;padding:11px 20px;white-space:nowrap}
+@media(max-width:767px){
+  .g-banner{flex-wrap:wrap;font-size:13px}
+  .g-banner button{width:100%}
+  .g-config{padding:28px 20px 20px}
+  .g-config-cabecera h2{font-size:26px}
+  .g-config-pie{flex-direction:column;align-items:stretch}
+  .g-nav{margin:10px 0}
+}

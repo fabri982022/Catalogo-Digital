@@ -1,4 +1,6 @@
 import type { Usuario, View } from '../types'
+import { LogoGolondrina } from './GolondrinaConfig'
+import { abrirConfigGolondrina } from '../golondrinaConfig'
 
 type NavbarProps = {
   usuario: Usuario | null
@@ -30,6 +32,9 @@ export function Navbar({ usuario, view, onNavigate, onLogout }: NavbarProps) {
             {usuario && <NavButton active={view === 'admin'} golondrina="ir-gestion" onClick={() => onNavigate('admin')}>Gestion</NavButton>}
           </div>
 
+          <button type="button" className="g-nav" onClick={abrirConfigGolondrina} title="Configurar Golondrina">
+            <LogoGolondrina size={16} /> Golondrina
+          </button>
           {usuario ? (
             <div className="user-menu">
               <span className="user-dot">{usuario.nombreUsuario.slice(0, 1).toUpperCase()}</span>

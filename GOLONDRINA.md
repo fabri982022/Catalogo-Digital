@@ -19,6 +19,18 @@ Además, cuando el asistente no está seguro, ofrece opciones; si el usuario eli
 
 Reglas para no molestar: un hábito necesita **3 repeticiones** (`minRepeticiones`), lo que no se repite se va olvidando (vida media de 14 días), hay al menos 90 s entre sugerencias, cada una descansa 20 min después de mostrarse, y si se rechaza 3 veces o se toca «No me muestres esto de nuevo», no vuelve.
 
+## Golondrina 100% configurable
+
+Al entrar, arriba de todo aparece el cartel **«Golondrina es 100% configurable»** hasta que el usuario la configura. También se abre desde el botón **Golondrina** del menú o escribiéndole **«configurar»** al asistente. Se elige:
+
+1. **Si aprende** de lo que hace (si no, no anota nada nuevo).
+2. **Si sugiere** y **qué tipos** de sugerencia quiere ver (lo que sigue, al llegar, costumbres por horario, atajos, funciones nuevas).
+3. **Qué tan rápido aprende** una costumbre: a la 2.ª, 3.ª o 5.ª repetición.
+4. **De qué lado** aparece el botón (izquierda o derecha).
+5. **Olvidar todo** lo aprendido.
+
+Se guarda en el navegador (`golondrina:<app>:config`). Desde código: `asistente.configuracion`, `asistente.configurar({...})` y `asistente.alCambiarConfig(fn)`; con la opción `alConfigurar` la app decide qué abrir cuando el usuario pide «configurar».
+
 ## Privacidad y control del usuario
 
 Todo se guarda **solo en el navegador** del usuario (`localStorage`, clave `golondrina:<app>[:usuario]`); no se envía nada a ningún servidor. El usuario puede escribirle al asistente:
